@@ -497,7 +497,19 @@
   new MutationObserver(function (records) {
     if (pending) return;
     for (var i = 0; i < records.length; i++) {
-      var added = records[i].addedNodes;
+      var r = records[i];
+      if (r.type === "attributes") {
+        // A morph (collage-live's) can strip what consent set, such as a granted
+        // iframe's src; gate() puts it back. Consent's own writes settle, since
+        // gate() sets nothing that is already there.
+        if (r.target.nodeType === 1 && r.target.matches(GATED)) {
+          pending = true;
+          queueMicrotask(regate);
+          return;
+        }
+        continue;
+      }
+      var added = r.addedNodes;
       for (var j = 0; j < added.length; j++) {
         var n = added[j];
         if (n.nodeType === 1 && (n.matches(GATED) || n.querySelector(GATED))) {
@@ -507,7 +519,10 @@
         }
       }
     }
-  }).observe(document.documentElement, { childList: true, subtree: true });
+  }).observe(document.documentElement, {
+    childList: true, subtree: true, attributes: true,
+    attributeFilter: ["src", "data-src", "data-consent", "type"]
+  });
 
   addStyle();
   gate();

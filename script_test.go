@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"html"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -252,5 +254,44 @@ func TestInit_Twice(t *testing.T) {
 	// collage wraps a plugin's Init error with the plugin's name.
 	if err == nil || !strings.HasSuffix(err.Error(), ": "+want) {
 		t.Errorf("second Init err = %v, want %q", err, want)
+	}
+}
+
+// styleCSS is the stylesheet consent.js builds: the string literals of its
+// `var css = ...` statement, joined.
+func styleCSS(t *testing.T) string {
+	t.Helper()
+	src := string(scriptJS)
+	start := strings.Index(src, "var css =")
+	end := strings.Index(src, "function addStyle")
+	if start < 0 || end < start {
+		t.Fatal("consent.js: cannot find the css statement")
+	}
+	var b strings.Builder
+	for _, m := range regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`).FindAllString(src[start:end], -1) {
+		s, err := strconv.Unquote(m)
+		if err != nil {
+			t.Fatalf("consent.js css literal %s: %v", m, err)
+		}
+		b.WriteString(s)
+	}
+	return b.String()
+}
+
+// The README gives the style-src hash of the banner's stylesheet. A CSS edit
+// changes it, and this fails until the README is updated.
+func TestREADME_StyleHash(t *testing.T) {
+	css := styleCSS(t)
+	if !strings.Contains(css, ".collage-consent{") {
+		t.Fatalf("extracted css looks wrong: %.80q", css)
+	}
+	sum := sha256.Sum256([]byte(css))
+	want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+	readme, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(readme), want) {
+		t.Errorf("README.md lacks the banner stylesheet's CSP hash %s; update the Content Security Policy section", want)
 	}
 }

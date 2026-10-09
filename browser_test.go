@@ -186,6 +186,20 @@ const browserContent = `<button id="opener">opener</button>
         noSrc: !f.hasAttribute("src")
       } });
     },
+    live_morph: async function () {
+      var f = document.querySelector("iframe[data-consent]");
+      await until(function () { return f.hasAttribute("src"); }, 3000);
+      var first = f.getAttribute("src");
+      // What collage-live's morph does: same node, attributes made to match the server's markup.
+      f.removeAttribute("src");
+      await sleep(300);
+      var again = f.getAttribute("src");
+      await sleep(300);
+      return snap({ checks: {
+        restored: again === first && !!first,
+        stable: f.getAttribute("src") === first
+      } });
+    },
     late_withdrawn: async function () {
       await until(function () { return window.order.length >= 2; }, 3000);
       document.cookie = "collage_consent=v=1&c=&t=1; Path=/";
@@ -725,6 +739,10 @@ func browserScenarios() []browserScenario {
 		{
 			name: "late_iframe", seed: "v=1&c=&t=1",
 			checks: []string{"placeholder", "noSrc"},
+		},
+		{
+			name: "live_morph", seed: "v=1&c=media&t=1",
+			checks: []string{"restored", "stable"},
 		},
 		{
 			name: "late_withdrawn", seed: "v=1&c=analytics&t=1",

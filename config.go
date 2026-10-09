@@ -2,6 +2,7 @@ package consent
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -99,12 +100,32 @@ func (c Config) validate(defaultLocale string) error {
 	if c.MaxAgeDays < 1 || c.MaxAgeDays > 400 {
 		return fmt.Errorf("elagoht/consent: maxAgeDays %d must be between 1 and 400", c.MaxAgeDays)
 	}
+	if err := checkPolicyURL(c.PolicyURL); err != nil {
+		return err
+	}
 	for _, p := range c.ServerPaths {
 		if !strings.HasPrefix(p, "/") {
 			return fmt.Errorf("elagoht/consent: serverPaths entry %q must begin with /", p)
 		}
 	}
 	return nil
+}
+
+// checkPolicyURL accepts "", a path beginning with a single "/", or an absolute
+// http or https URL with a host. Anything else, javascript: and data: included,
+// never reaches the banner's link.
+func checkPolicyURL(v string) error {
+	if v == "" {
+		return nil
+	}
+	if strings.HasPrefix(v, "/") && !strings.HasPrefix(v, "//") && !strings.HasPrefix(v, `/\`) {
+		return nil
+	}
+	u, err := url.Parse(v)
+	if err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
+		return nil
+	}
+	return fmt.Errorf("elagoht/consent: policyURL %q must be a path beginning with / or an absolute http(s) URL", v)
 }
 
 // textFor is the wording for locale, each key falling back to the default

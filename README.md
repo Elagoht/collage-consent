@@ -197,10 +197,11 @@ It is set with `Path=/; SameSite=Lax; Max-Age=<maxAgeDays × 86400>`, plus `Secu
 on https. It is not `HttpOnly`, because the script reads it. The cookie belongs to
 the required category.
 
-Never set `collage_consent` from the server yourself. An `HttpOnly` cookie of that
-name is sent to the server, so `Granted` reads it. The script cannot see it, so the
-browser shows the banner and keeps everything gated while the server answers from
-a choice the visitor cannot change.
+Never set `collage_consent` from the server yourself, and never as `HttpOnly`. A
+server-set `HttpOnly` cookie of that name is invisible to the script, but it is sent
+to the server, so `Granted` reads it: the server and the browser would disagree.
+The browser shows the banner and keeps everything gated while the server answers
+from a choice the visitor cannot change.
 
 Parsing is strict, and the browser and the server follow the same rules. A value
 counts as no decision when any of these holds:
@@ -287,7 +288,10 @@ shared, is a possible follow-up.
   with every optional category off. Boxes are never pre-ticked, with or without GPC,
   because pre-ticked boxes are not valid consent. GPC therefore changes nothing you
   can see. It never grants anything, and Accept all still grants everything, because
-  the visitor's explicit choice wins. The server does not read the `Sec-GPC` header.
+  the visitor's explicit choice wins for consent itself. A plugin may add its own
+  signal check on top: analytics' `RespectDNT` also honours GPC, so a GPC browser
+  loads nothing even after Accept all. The server does not read the `Sec-GPC`
+  header.
 - **Do Not Track** is not read. It never grants or refuses a category.
 
 ## Content Security Policy
@@ -299,9 +303,28 @@ shared, is a possible follow-up.
     Nothing gated runs then, and no banner appears.
   - A gated inline script needs its own `nonce`, which is carried over on
     activation. A gated `src` script needs its origin allowed in `script-src`.
+- **Gated inline scripts under a strict CSP.** A gated inline script is activated
+  as an inline script, so a `script-src` without `'unsafe-inline'` blocks it unless
+  it has a `nonce` (carried over, above) or its text is allowed by hash. Add
+  `'sha256-<base64 of the script text>'` to `script-src`; Chrome honours a hash for
+  the activated copy. The hash is of the exact text between the tags. For example,
+  analytics' Google Analytics configuration (`consentCategory` set) is such a
+  script, and its hash depends on the measurement id.
 - **Styles.** The stylesheet is a `<style>` element built by the script, so
-  `style-src` applies to it. Under a policy that forbids it, the banner is unstyled
-  but usable.
+  `style-src` applies to it. **Any policy without permission for it blocks it**,
+  and that includes collage-secure's example policy (`default-src 'self'` with no
+  `style-src`). The banner stays usable but unstyled: the browser's plain
+  `<dialog>`, unstyled placeholders, and a CSP violation in the console on every
+  page load. To style it under a strict policy, allow its hash:
+
+  ```
+  style-src 'self' 'sha256-eelrSqXC4J1uUIXb9KT4pg6d9Fk5Q6A+EEp1Kfc6N1k='
+  ```
+
+  The hash changes whenever the stylesheet does. A test fails if this README does
+  not hold the current one, so it is updated with each release that touches the
+  CSS. (`'unsafe-inline'` in `style-src` also works, at the cost of allowing every
+  inline style.)
 
 ## Limits
 
@@ -316,9 +339,11 @@ shared, is a possible follow-up.
   a new choice, but the shadowing one is still what is read. The script warns in the
   console when what it reads back is not what it saved. Do not set
   `collage_consent` from anywhere else.
-- **Blocked cookies.** When the browser refuses the cookie, a choice lives only in
-  that page's memory. It is forgotten on the next page, which asks again. The same
-  console warning appears.
+- **Blocked cookies.** When the browser refuses the cookie, the choice does not
+  reliably survive even within the page: the script re-reads the cookie before it
+  acts, so the choice resets to "nothing granted" (fail-closed) on the next
+  re-check, such as a late gated node, opening the dialog again, or a placeholder
+  click. The next page asks again. The same console warning appears.
 - **Offline.** Without the cached script there is no banner, and gated content
   stays inert. That happens when a page is served offline and consent.js was never
   cached. Nothing gated ever falls back to running.

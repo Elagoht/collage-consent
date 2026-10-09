@@ -41,6 +41,14 @@ func TestValidate_Table(t *testing.T) {
 		{"empty label", func(c *Config) { c.Text["en"].Categories["analytics"] = "" }, "label"},
 		{"maxAge 1", func(c *Config) { c.MaxAgeDays = 1 }, ""},
 		{"maxAge 400", func(c *Config) { c.MaxAgeDays = 400 }, ""},
+		{"policyURL path", func(c *Config) { c.PolicyURL = "/privacy" }, ""},
+		{"policyURL https", func(c *Config) { c.PolicyURL = "https://example.com/privacy" }, ""},
+		{"policyURL http", func(c *Config) { c.PolicyURL = "http://example.com/p" }, ""},
+		{"policyURL javascript", func(c *Config) { c.PolicyURL = "javascript:alert(1)" }, "policyURL"},
+		{"policyURL protocol-relative", func(c *Config) { c.PolicyURL = "//evil.example/p" }, "policyURL"},
+		{"policyURL relative", func(c *Config) { c.PolicyURL = "privacy" }, "policyURL"},
+		{"policyURL data", func(c *Config) { c.PolicyURL = "data:text/html,x" }, "policyURL"},
+		{"policyURL scheme only", func(c *Config) { c.PolicyURL = "https://" }, "policyURL"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

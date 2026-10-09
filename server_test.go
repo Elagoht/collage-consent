@@ -575,3 +575,50 @@ func TestGranted_EarlyStatusPage(t *testing.T) {
 		t.Errorf("warnings: %q, want one saying the request may have been answered before the middleware", warns)
 	}
 }
+
+// M6: a hand-built render context has no collage vary state; Granted fails
+// closed instead of panicking.
+func TestGranted_HandBuiltContext(t *testing.T) {
+	s := newServerSite(t, siteOpts{})
+	s.get(t, "/open", "") // starts the app, so the plugin is initialised
+	r := httptest.NewRequest("GET", "/shop", nil)
+	if Granted(&collage.RenderContext{Request: r}, "analytics") {
+		t.Error("Granted on a hand-built context")
+	}
+	if !Granted(&collage.RenderContext{Request: r}, "essential") {
+		t.Error("a required category must stay granted")
+	}
+}
+
+// M6: inside a served request (vary state set, so the warning path runs), a
+// hand-built context also fails closed.
+func TestGranted_HandBuiltContextInRequest(t *testing.T) {
+	var got atomic.Int32
+	s := newServerSite(t, siteOpts{appUse: func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/open" {
+				if Granted(&collage.RenderContext{Request: r}, "analytics") {
+					got.Store(1)
+				} else {
+					got.Store(2)
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}})
+	s.get(t, "/open", "collage_consent=v=1&c=analytics&t=1")
+	if got.Load() != 2 {
+		t.Errorf("hand-built context in a request: %d, want 2 (false)", got.Load())
+	}
+}
+
+// A bare request (no URL, no context) in a context fails closed too.
+func TestGranted_BareRequest(t *testing.T) {
+	s := newServerSite(t, siteOpts{})
+	s.get(t, "/open", "")
+	for _, rc := range []*collage.RenderContext{{}, {Request: &http.Request{}}} {
+		if Granted(rc, "analytics") {
+			t.Errorf("Granted on %+v", rc)
+		}
+	}
+}
