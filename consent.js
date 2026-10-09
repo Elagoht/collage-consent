@@ -155,7 +155,6 @@
 
   // save stores next, the complete set of granted non-required categories.
   function save(next) {
-    refresh();
     chosen = next;
     decided = true;
     var value = "v=" + version + "&c=" + Array.from(next).sort().join(",") + "&t=" + Math.floor(Date.now() / 1000);
@@ -163,8 +162,9 @@
     if (location.protocol === "https:") cookie += "; Secure";
     document.cookie = cookie;
     if (rawCookie(document.cookie) !== value) {
-      // Another collage_consent (a longer Path, or a parent domain) reads first.
-      console.warn("elagoht/consent: the saved choice is shadowed by another collage_consent cookie");
+      // Cookies are blocked, so the choice lives only in this page's memory, or
+      // another collage_consent (a longer Path, a parent domain) reads first.
+      console.warn("elagoht/consent: the saved choice was not stored or is shadowed by another collage_consent cookie");
     }
     if (dialog && dialog.open) closeDialog();
     gate();
@@ -357,7 +357,7 @@
       var lp = document.createElement("p");
       var a = document.createElement("a");
       a.href = cfg.policyURL;
-      a.textContent = cfg.policyURL;
+      a.textContent = text.policy || cfg.policyURL;
       lp.append(a);
       dialog.append(lp);
     }

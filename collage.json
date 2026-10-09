@@ -1,0 +1,103 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Elagoht/collage-snippets-highlighter/main/schemas/collage-plugin-manifest.schema.json",
+  "name": "elagoht/consent",
+  "description": "A collage plugin with a cookie-consent banner, a gate that holds scripts and iframes back until their category is granted, and a JS API.",
+  "repository": "https://github.com/Elagoht/collage-consent",
+  "config": {
+    "type": "object",
+    "description": "A collage plugin with a cookie-consent banner, a gate that holds scripts and iframes back until their category is granted, and a JS API.",
+    "properties": {
+      "categories": {
+        "type": "array",
+        "description": "Categories are the kinds of processing; at least one is required.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Name is the category's name, matching ^[a-z0-9-]+$: what data-consent names."
+            },
+            "required": {
+              "type": "boolean",
+              "description": "Required marks a category that is always granted and has no switch."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "maxAgeDays": {
+        "type": "integer",
+        "description": "MaxAgeDays is how long the choice is remembered, 1 to 400. Default 180."
+      },
+      "policyURL": {
+        "type": "string",
+        "description": "PolicyURL links the banner to the privacy policy."
+      },
+      "serverPaths": {
+        "type": "array",
+        "description": "ServerPaths are the paths where the server may read the choice with Granted, by whole segments: \"/shop\" covers \"/shop/x\", never \"/shopping\". Responses there carry Vary: Cookie.",
+        "items": {
+          "type": "string"
+        }
+      },
+      "text": {
+        "type": "object",
+        "description": "Text is the wording per locale; the default locale must be present.",
+        "additionalProperties": {
+          "type": "object",
+          "properties": {
+            "accept": {
+              "type": "string",
+              "description": "Accept is the label of the button granting every category."
+            },
+            "allow": {
+              "type": "string",
+              "description": "Allow is the placeholder's grant label; {category} is the category's label."
+            },
+            "body": {
+              "type": "string",
+              "description": "Body is the banner's text."
+            },
+            "categories": {
+              "type": "object",
+              "description": "Categories are each category's label, by name.",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "placeholder": {
+              "type": "string",
+              "description": "Placeholder stands before a held-back iframe; {host} is its host."
+            },
+            "policy": {
+              "type": "string",
+              "description": "Policy is the policy link's text; without it the link reads as PolicyURL."
+            },
+            "reject": {
+              "type": "string",
+              "description": "Reject is the label of the button refusing every optional category."
+            },
+            "save": {
+              "type": "string",
+              "description": "Save is the label of the button saving the ticked categories."
+            },
+            "settings": {
+              "type": "string",
+              "description": "Settings is the label of the button showing one checkbox per category."
+            },
+            "title": {
+              "type": "string",
+              "description": "Title is the banner's heading."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "version": {
+        "type": "integer",
+        "description": "Version is bumped to ask every visitor again. Default 1."
+      }
+    },
+    "additionalProperties": false
+  }
+}

@@ -9,22 +9,35 @@ import (
 // Category is one kind of processing the visitor can allow or refuse. A required
 // category is always granted and has no switch.
 type Category struct {
-	Name     string `json:"name"`
-	Required bool   `json:"required"`
+	// Name is the category's name, matching ^[a-z0-9-]+$: what data-consent names.
+	Name string `json:"name"`
+	// Required marks a category that is always granted and has no switch.
+	Required bool `json:"required"`
 }
 
 // Text is the banner's wording in one locale. A key missing from a non-default
 // locale falls back to the default locale's.
 type Text struct {
-	Title       string            `json:"title"`
-	Body        string            `json:"body"`
-	Accept      string            `json:"accept"`
-	Reject      string            `json:"reject"`
-	Save        string            `json:"save"`
-	Settings    string            `json:"settings"`
-	Placeholder string            `json:"placeholder"`
-	Allow       string            `json:"allow"`
-	Categories  map[string]string `json:"categories"`
+	// Title is the banner's heading.
+	Title string `json:"title"`
+	// Body is the banner's text.
+	Body string `json:"body"`
+	// Accept is the label of the button granting every category.
+	Accept string `json:"accept"`
+	// Reject is the label of the button refusing every optional category.
+	Reject string `json:"reject"`
+	// Save is the label of the button saving the ticked categories.
+	Save string `json:"save"`
+	// Settings is the label of the button showing one checkbox per category.
+	Settings string `json:"settings"`
+	// Placeholder stands before a held-back iframe; {host} is its host.
+	Placeholder string `json:"placeholder"`
+	// Allow is the placeholder's grant label; {category} is the category's label.
+	Allow string `json:"allow"`
+	// Policy is the policy link's text; without it the link reads as PolicyURL.
+	Policy string `json:"policy"`
+	// Categories are each category's label, by name.
+	Categories map[string]string `json:"categories"`
 }
 
 // Config is the plugin's configuration.
@@ -39,7 +52,9 @@ type Config struct {
 	PolicyURL string `json:"policyURL"`
 	// MaxAgeDays is how long the choice is remembered, 1 to 400. Default 180.
 	MaxAgeDays int `json:"maxAgeDays"`
-	// ServerPaths are the paths where the server may read the choice.
+	// ServerPaths are the paths where the server may read the choice with
+	// Granted, by whole segments: "/shop" covers "/shop/x", never "/shopping".
+	// Responses there carry Vary: Cookie.
 	ServerPaths []string `json:"serverPaths"`
 }
 
@@ -110,6 +125,7 @@ func (c Config) textFor(locale, defaultLocale string) Text {
 	for dst, src := range map[*string]string{
 		&out.Title: t.Title, &out.Body: t.Body, &out.Accept: t.Accept, &out.Reject: t.Reject,
 		&out.Save: t.Save, &out.Settings: t.Settings, &out.Placeholder: t.Placeholder, &out.Allow: t.Allow,
+		&out.Policy: t.Policy,
 	} {
 		if src != "" {
 			*dst = src

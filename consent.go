@@ -41,6 +41,8 @@ var (
 
 // Init reads the configuration, applies the defaults, checks it against the
 // default locale, builds the script element for each locale and mounts consent.js.
+// With serverPaths it adds the middleware that varies those paths on the cookie,
+// and it makes this App's configuration the one Granted reads.
 // A Plugin value serves one App: once an Init has succeeded, another fails, since
 // the value keeps that App's configuration.
 func (p *Plugin) Init(_ context.Context, host collage.Host) error {
@@ -65,8 +67,14 @@ func (p *Plugin) Init(_ context.Context, host collage.Host) error {
 	if err := host.Mount(scriptPrefix, scriptFS, collage.WithCacheControl(longCache)); err != nil {
 		return fmt.Errorf("elagoht/consent: serve consent.js: %w", err)
 	}
+	if len(cfg.ServerPaths) > 0 {
+		if err := host.Use(middleware(cfg, host.Logger())); err != nil {
+			return fmt.Errorf("elagoht/consent: read the cookie on serverPaths: %w", err)
+		}
+	}
 	p.cfg, p.tags = cfg, tags
 	p.inited.Store(true)
+	active.Store(&serverState{cfg: cfg, logger: host.Logger()})
 	return nil
 }
 

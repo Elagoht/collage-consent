@@ -225,6 +225,13 @@ const browserContent = `<button id="opener">opener</button>
       return snap({ cookies: cookies, checks: c });
     },
     version_bump: async function () { await sleep(300); return snap(); },
+    policy_label: async function () {
+      var a = dialog().querySelector("a[href]");
+      return snap({ checks: {
+        label: !!a && a.textContent === q.get("want"),
+        href: !!a && a.getAttribute("href") === "/privacy"
+      } });
+    },
     cookie_honoured: async function () {
       await until(function () { return window.order.length >= 2; }, 3000);
       return snap();
@@ -345,19 +352,6 @@ type observed struct {
 		Cookie  string   `json:"cookie"`
 		Granted []string `json:"granted"`
 	} `json:"stash"`
-}
-
-func browserConfig() Config {
-	return Config{
-		Categories: []Category{{Name: "essential", Required: true}, {Name: "analytics"}, {Name: "media"}},
-		Text: map[string]Text{"en": {
-			Title: "Cookies", Body: "We use cookies.", Accept: "Accept all", Reject: "Reject all",
-			Save: "Save choices", Settings: "Choose",
-			Placeholder: "This content loads from {host}.", Allow: "Allow {category}",
-			Categories: map[string]string{"essential": "Essential", "analytics": "Analytics", "media": "Embedded media"},
-		}},
-		PolicyURL: "/privacy",
-	}
 }
 
 // serveBrowserSite starts a real app with cfg on a free loopback port and returns
@@ -517,8 +511,11 @@ func browserScenarios() []browserScenario {
 					t.Errorf("dialog open = %v, want %v", o.DialogOpen, dialog)
 				}
 				wantGranted(t, o.Granted, granted...)
-				if !slices.Contains(granted, "analytics") {
-					wantInert(t, o)
+				if !slices.Contains(granted, "analytics") && (o.Ran || len(o.Order) != 0) {
+					t.Errorf("analytics ran without its grant: ran=%v order=%q", o.Ran, o.Order)
+				}
+				if !slices.Contains(granted, "media") && o.IframeSrc != "" {
+					t.Errorf("media iframe loaded without its grant: %q", o.IframeSrc)
 				}
 				if len(o.CookieWrites) != 0 {
 					t.Errorf("cookie written without a decision: %q", o.CookieWrites)
@@ -526,8 +523,18 @@ func browserScenarios() []browserScenario {
 			},
 		}
 	}
-	sixtyFive := strings.Repeat("analytics,", 64) + "analytics"
-	return []browserScenario{
+	// The cookie cases are TestParseCookie_Table's, so the JS and Go parsers
+	// answer the same list.
+	var malformedCookies []browserScenario
+	for _, c := range cookieCases() {
+		if c.goOnly {
+			continue
+		}
+		granted := append([]string{"essential"}, c.granted...)
+		slices.Sort(granted)
+		malformedCookies = append(malformedCookies, malformed(c.name, c.seed, c.version, !c.decided, granted...))
+	}
+	return append(malformedCookies, []browserScenario{
 		{
 			name:   "gate_inert_before_grant",
 			checks: []string{"placeholder", "stillPlain"},
@@ -631,21 +638,6 @@ func browserScenarios() []browserScenario {
 				}
 			},
 		},
-		// The brief's cookie, under both versions: the duplicate v alone makes it
-		// invalid, so first-wins and last-wins parsers each fail one of these.
-		malformed("duplicate_v_1", "c=analytics,evil&v=1&t=1&v=2", 1, true, "essential"),
-		malformed("duplicate_v_2", "c=analytics,evil&v=1&t=1&v=2", 2, true, "essential"),
-		malformed("duplicate_c", "v=1&c=analytics&c=media&t=1", 1, true, "essential"),
-		malformed("missing_t", "v=1&c=analytics", 1, true, "essential"),
-		malformed("extra_key", "v=1&c=analytics&t=1&x=1", 1, true, "essential"),
-		malformed("v_not_number", "v=abc&c=analytics&t=1", 1, true, "essential"),
-		malformed("v_leading_zero", "v=01&c=analytics&t=1", 1, true, "essential"),
-		malformed("t_not_number", "v=1&c=analytics&t=now", 1, true, "essential"),
-		malformed("too_many_entries", "v=1&c="+sixtyFive+"&t=1", 1, true, "essential"),
-		malformed("quoted_value", `"v=1&c=analytics&t=1"`, 1, false, "analytics", "essential"),
-		malformed("unknown_dropped", "v=1&c=analytics,evil&t=1", 1, false, "analytics", "essential"),
-		malformed("percent_not_decoded", "v=1&c=%61nalytics&t=1", 1, false, "essential"),
-		malformed("required_in_c", "v=1&c=essential&t=1", 1, false, "essential"),
 		{
 			name:   "placeholder_grants_one",
 			checks: []string{"isButton", "hostText", "categoryText", "placeholderGone"},
@@ -813,11 +805,24 @@ func browserScenarios() []browserScenario {
 			},
 		},
 		{
+			name: "policy_label", params: url.Values{"want": {"Privacy policy"}},
+			cfg: func(c *Config) {
+				en := c.Text["en"]
+				en.Policy = "Privacy policy"
+				c.Text["en"] = en
+			},
+			checks: []string{"label", "href"},
+		},
+		{
+			name: "policy_label/url", page: "policy_label", params: url.Values{"want": {"/privacy"}},
+			checks: []string{"label", "href"},
+		},
+		{
 			name:   "open_link",
 			seed:   "v=1&c=&t=1",
 			checks: []string{"closedOnLoad", "linkOpens", "noNavigation", "closedAgain", "lateLinkOpens"},
 		},
-	}
+	}...)
 }
 
 // browserChrome is the Chrome to run, or why the browser tests skip. On CI

@@ -76,14 +76,18 @@ func TestDefaults(t *testing.T) {
 
 func TestTextFor_Fallback(t *testing.T) {
 	c := valid()
-	c.Text["en"] = Text{Title: "T", Save: "Save", Accept: "A", Categories: map[string]string{"essential": "Essential", "analytics": "Analytics"}}
+	c.Text["en"] = Text{Title: "T", Save: "Save", Accept: "A", Policy: "Privacy policy", Categories: map[string]string{"essential": "Essential", "analytics": "Analytics"}}
 	c.Text["tr"] = Text{Title: "Baslik", Categories: map[string]string{"essential": "Zorunlu"}}
 	got := c.textFor("tr", "en")
-	if got.Title != "Baslik" || got.Save != "Save" || got.Accept != "A" {
+	if got.Title != "Baslik" || got.Save != "Save" || got.Accept != "A" || got.Policy != "Privacy policy" {
 		t.Errorf("text = %+v", got)
 	}
 	if got.Categories["essential"] != "Zorunlu" || got.Categories["analytics"] != "Analytics" {
 		t.Errorf("categories = %v", got.Categories)
+	}
+	c.Text["tr"] = Text{Policy: "Gizlilik", Categories: map[string]string{}}
+	if got := c.textFor("tr", "en"); got.Policy != "Gizlilik" || got.Title != "T" {
+		t.Errorf("tr policy = %q, title = %q", got.Policy, got.Title)
 	}
 	if en := c.textFor("de", "en"); en.Title != "T" {
 		t.Errorf("unknown locale should give default, got %+v", en)
