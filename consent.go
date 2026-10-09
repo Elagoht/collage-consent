@@ -18,10 +18,8 @@ const Name = "elagoht/consent"
 // Plugin is the consent plugin.
 type Plugin struct {
 	cfg Config
-	// tags is the hoisted script element per locale; def is the default
-	// locale's key, used for a locale with no entry.
+	// tags is the hoisted script element for the default and every supported locale.
 	tags   map[string]template.HTML
-	def    string
 	inited atomic.Bool
 }
 
@@ -67,7 +65,7 @@ func (p *Plugin) Init(_ context.Context, host collage.Host) error {
 	if err := host.Mount(scriptPrefix, scriptFS, collage.WithCacheControl(longCache)); err != nil {
 		return fmt.Errorf("elagoht/consent: serve consent.js: %w", err)
 	}
-	p.cfg, p.tags, p.def = cfg, tags, def
+	p.cfg, p.tags = cfg, tags
 	p.inited.Store(true)
 	return nil
 }
@@ -79,10 +77,8 @@ func (p *Plugin) OnBeforeRender(_ context.Context, ev *collage.BeforeRenderEvent
 	if ev.Context == nil || p.tags == nil {
 		return nil
 	}
-	tag, ok := p.tags[ev.Context.Locale]
-	if !ok {
-		tag = p.tags[p.def]
-	}
-	ev.Context.Hoist("head", "consent", tag)
+	// Init built a tag for the default locale and every supported one, and collage
+	// refuses a page in any other locale, so a render's locale is always present.
+	ev.Context.Hoist("head", "consent", p.tags[ev.Context.Locale])
 	return nil
 }

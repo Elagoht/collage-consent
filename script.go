@@ -31,7 +31,7 @@ var scriptHash = func() string {
 }()
 
 const (
-	scriptPrefix = "/_collage/"
+	scriptPrefix = "/_collage/consent/"
 	scriptPath   = scriptPrefix + "consent.js"
 	// longCache is served with consent.js whatever its URL says: the hash in the
 	// query, not the name, is what changes with the file.

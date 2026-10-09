@@ -3,6 +3,8 @@ package consent
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"html"
 	"net/http"
@@ -24,7 +26,7 @@ const (
 )
 
 // tagPattern is the hoisted tag, with the brief's attribute order.
-var tagPattern = regexp.MustCompile(`<script defer src="/_collage/consent\.js\?v=([0-9a-f]{12})" data-consent-config="([^"]*)"></script>`)
+var tagPattern = regexp.MustCompile(`<script defer src="/_collage/consent/consent\.js\?v=([0-9a-f]{12})" data-consent-config="([^"]*)"></script>`)
 
 // siteConfig is valid() with a tr block that lacks Accept, so the tr page must
 // fall back to en's.
@@ -42,7 +44,12 @@ func siteConfig() Config {
 // holds another fragment.
 func site(t *testing.T, cfg Config) *collage.App {
 	t.Helper()
-	a, err := collage.New(&collage.Config{
+	return siteWith(t, cfg, func(*collage.Config) {})
+}
+
+func siteWith(t *testing.T, cfg Config, tweak func(*collage.Config)) *collage.App {
+	t.Helper()
+	conf := &collage.Config{
 		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
 		Template: collage.TemplateConfig{FS: fstest.MapFS{
 			"t/layout.html": {Data: []byte(layoutHTML)},
@@ -51,7 +58,9 @@ func site(t *testing.T, cfg Config) *collage.App {
 		}, Root: "t"},
 		Locale:  collage.LocaleConfig{Default: "en", Supported: []string{"en", "tr"}},
 		Plugins: []collage.Plugin{NewWith(cfg)},
-	})
+	}
+	tweak(conf)
+	a, err := collage.New(conf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +104,7 @@ func TestHoist_OncePerPage(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
-	if n := strings.Count(w.Body.String(), "/_collage/consent.js"); n != 1 {
+	if n := strings.Count(w.Body.String(), "/_collage/consent/consent.js"); n != 1 {
 		t.Fatalf("script referenced %d times:\n%s", n, w.Body)
 	}
 	v, cfg := hoisted(t, w.Body.String())
@@ -151,7 +160,7 @@ func TestHoist_EscapesText(t *testing.T) {
 func TestScript_Served(t *testing.T) {
 	a := site(t, siteConfig())
 	v, _ := hoisted(t, fetch(a, "/").Body.String())
-	w := fetch(a, "/_collage/consent.js?v="+v)
+	w := fetch(a, "/_collage/consent/consent.js?v="+v)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d", w.Code)
 	}
@@ -168,14 +177,43 @@ func TestScript_Served(t *testing.T) {
 		t.Error("body is not the embedded file")
 	}
 	// v only busts caches: the file is the same whatever it says.
-	if w := fetch(a, "/_collage/consent.js?v=000000000000"); w.Code != http.StatusOK {
+	if w := fetch(a, "/_collage/consent/consent.js?v=000000000000"); w.Code != http.StatusOK {
 		t.Errorf("wrong v: status %d", w.Code)
 	}
 }
 
+func TestScript_DevModeNoStore(t *testing.T) {
+	a := siteWith(t, siteConfig(), func(c *collage.Config) { c.DevMode = true })
+	w := fetch(a, "/_collage/consent/consent.js?v="+scriptHash)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("dev Cache-Control = %q, want no-store", got)
+	}
+}
+
+// The script's mount must leave the rest of /_collage/ to others.
+func TestScript_SharesCollagePrefix(t *testing.T) {
+	a := site(t, siteConfig())
+	if err := a.Mount("/_collage/other/", fstest.MapFS{"x.txt": {Data: []byte("x")}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Start(); err != nil {
+		t.Fatalf("start with a second /_collage/ mount: %v", err)
+	}
+	if w := fetch(a, "/"); w.Code != http.StatusOK {
+		t.Errorf("/ status %d: %s", w.Code, w.Body)
+	}
+	if w := fetch(a, "/_collage/other/x.txt"); w.Code != http.StatusOK {
+		t.Errorf("other mount status %d", w.Code)
+	}
+}
+
 func TestScript_Hash(t *testing.T) {
-	if !regexp.MustCompile(`^[0-9a-f]{12}$`).MatchString(scriptHash) {
-		t.Errorf("hash %q", scriptHash)
+	sum := sha256.Sum256(scriptJS)
+	if want := hex.EncodeToString(sum[:])[:12]; scriptHash != want {
+		t.Errorf("hash %q, want %q", scriptHash, want)
 	}
 	if !bytes.HasPrefix(scriptJS, []byte(`"use strict";`)) {
 		t.Errorf("consent.js does not start in strict mode")
@@ -191,9 +229,9 @@ func TestExport_WritesScript(t *testing.T) {
 	if _, err := b.Build(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	js, err := os.ReadFile(filepath.Join(out, "_collage", "consent.js"))
+	js, err := os.ReadFile(filepath.Join(out, "_collage", "consent", "consent.js"))
 	if err != nil || !bytes.Equal(js, scriptJS) {
-		t.Errorf("_collage/consent.js not written as embedded: %v", err)
+		t.Errorf("_collage/consent/consent.js not written as embedded: %v", err)
 	}
 	page, err := os.ReadFile(filepath.Join(out, "index.html"))
 	if err != nil {
