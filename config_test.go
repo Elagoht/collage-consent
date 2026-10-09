@@ -142,7 +142,7 @@ func TestInit_Validates(t *testing.T) {
 	if p.cfg.Version != 1 || p.cfg.MaxAgeDays != 180 {
 		t.Errorf("defaults not kept: %+v", p.cfg)
 	}
-	if p.Name() != Name || p.Version() != "0.1.0" {
+	if p.Name() != Name || p.Version() != "0.1.2" {
 		t.Error("identity")
 	}
 }
