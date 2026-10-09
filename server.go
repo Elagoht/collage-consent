@@ -91,12 +91,12 @@ func visitor(rc *collage.RenderContext) bool {
 // middleware varies every request under cfg.ServerPaths on the visitor's choice:
 // the granted non-required categories, sorted and comma-joined, "" for none. The
 // cache keys on that, not the raw cookie, so visitors with one choice share an
-// entry. A build's capture request is not varied: the file it describes was
-// rendered without a visitor, the same for everyone.
+// entry. A build's capture request is varied like any other: it has no cookie, so
+// its combo is "", and collage keeps Vary out of the headers it deploys.
 func middleware(cfg Config, logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if underPaths(r.URL.Path, cfg.ServerPaths) && !collage.IsCapture(r.Context()) {
+			if underPaths(r.URL.Path, cfg.ServerPaths) {
 				granted, _ := readCookie(r, cfg)
 				if err := collage.Vary(r, varyHeader, strings.Join(granted, ",")); err != nil {
 					logger.Warn("elagoht/consent: cannot vary on the consent cookie", "path", r.URL.Path, "error", err)

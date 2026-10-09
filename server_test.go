@@ -151,11 +151,32 @@ type serverSite struct {
 	app     *collage.App
 	logs    *logRecorder
 	renders atomic.Int32
+	probe   *headerProbe
+}
+
+// headerProbe is a plugin with a BuildFinishedHook, which is what makes a build
+// send its capture requests; it keeps each captured file's headers by path.
+type headerProbe struct {
+	captured map[string]http.Header
+}
+
+func (*headerProbe) Name() string                             { return "test/header-probe" }
+func (*headerProbe) Version() string                          { return "0.0.0" }
+func (*headerProbe) Init(context.Context, collage.Host) error { return nil }
+func (*headerProbe) Shutdown(context.Context) error           { return nil }
+func (h *headerProbe) OnBuildFinished(_ context.Context, ev *collage.BuildFinishedEvent) error {
+	h.captured = map[string]http.Header{}
+	for _, f := range ev.Files {
+		if f.Captured {
+			h.captured[f.Path] = f.Headers
+		}
+	}
+	return nil
 }
 
 func newServerSite(t *testing.T, static bool) *serverSite {
 	t.Helper()
-	s := &serverSite{logs: &logRecorder{}}
+	s := &serverSite{logs: &logRecorder{}, probe: &headerProbe{}}
 	cfg := browserLikeConfig()
 	cfg.ServerPaths = []string{"/shop"}
 	a, err := collage.New(&collage.Config{
@@ -167,7 +188,7 @@ func newServerSite(t *testing.T, static bool) *serverSite {
 		Locale:  collage.LocaleConfig{Default: "en", Supported: []string{"en"}},
 		Cache:   collage.CacheConfig{Enabled: true},
 		Logger:  slog.New(s.logs),
-		Plugins: []collage.Plugin{NewWith(cfg)},
+		Plugins: []collage.Plugin{NewWith(cfg), s.probe},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -322,6 +343,13 @@ func TestGranted_StaticExport(t *testing.T) {
 		}
 		if !strings.Contains(string(page), "analytics=false media=false essential=true bogus=false") {
 			t.Errorf("%s: %s", f, para(string(page)))
+		}
+	}
+	// The build also captured each page's headers through the handler, so
+	// Granted ran in capture requests too, and the check below covers them.
+	for _, path := range []string{"/shop", "/open"} {
+		if _, ok := s.probe.captured[path]; !ok {
+			t.Fatalf("%s was not captured: %v", path, s.probe.captured)
 		}
 	}
 	if w := s.logs.warns(""); len(w) != 0 {
