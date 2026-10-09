@@ -36,7 +36,7 @@
   // PARSE RULES. Task 4's Go parser mirrors these exactly; keep the two in step.
   //
   // Finding the cookie (this mirrors Go's net/http Request.Cookie, go1.26):
-  //  1. Split the cookie string on ";". Trim each part of spaces and tabs; skip
+  //  1. Split the cookie string on ";". Trim each part of space, tab, CR and LF; skip
   //     empty parts. Split each part at its first "=" into name and value; trim
   //     the name (not the value). Consider only parts whose name is exactly
   //     "collage_consent".
@@ -70,8 +70,8 @@
   // comma-joined>&t=<unix seconds>; Path=/; SameSite=Lax; Max-Age=<maxAge>
   // plus "; Secure" on https. Not HttpOnly.
 
-  function trimSpTab(s) {
-    return s.replace(/^[ \t]+|[ \t]+$/g, "");
+  function trimSpace(s) {
+    return s.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, "");
   }
 
   function validValue(v) {
@@ -86,10 +86,10 @@
   function rawCookie(all) {
     var parts = all.split(";");
     for (var i = 0; i < parts.length; i++) {
-      var part = trimSpTab(parts[i]);
+      var part = trimSpace(parts[i]);
       if (part === "") continue;
       var eq = part.indexOf("=");
-      var name = trimSpTab(eq < 0 ? part : part.slice(0, eq));
+      var name = trimSpace(eq < 0 ? part : part.slice(0, eq));
       var val = eq < 0 ? "" : part.slice(eq + 1);
       if (name !== COOKIE) continue;
       if (val.length > 1 && val[0] === '"' && val[val.length - 1] === '"') val = val.slice(1, -1);
