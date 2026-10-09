@@ -127,9 +127,21 @@
 
   // ---- state ------------------------------------------------------------------
 
-  var chosen = parse(rawCookie(document.cookie)); // null: no decision yet
-  var decided = chosen !== null;
-  if (!chosen) chosen = new Set();
+  var chosen = new Set(); // the granted non-required categories, as the cookie says
+  var decided = false;
+  // activated: categories whose gated content has run (or loaded) on this page.
+  // Withdrawing one of them reloads, since what ran cannot be undone.
+  var activated = new Set();
+
+  // refresh re-reads the cookie, so a tab opened before another tab (or the
+  // visitor) changed or cleared it never writes the old choice back.
+  function refresh() {
+    var g = parse(rawCookie(document.cookie));
+    decided = g !== null;
+    chosen = g || new Set();
+    return chosen;
+  }
+  refresh();
 
   function isGranted(name) {
     return required.has(name) || chosen.has(name);
@@ -141,26 +153,32 @@
     return out.sort();
   }
 
+  // save stores next, the complete set of granted non-required categories.
   function save(next) {
-    var withdrawn = false;
-    chosen.forEach(function (n) {
-      if (!next.has(n)) withdrawn = true;
-    });
+    refresh();
     chosen = next;
     decided = true;
-    var c = Array.from(next).sort().join(",");
-    var cookie = COOKIE + "=v=" + version + "&c=" + c + "&t=" + Math.floor(Date.now() / 1000) +
-      "; Path=/; SameSite=Lax; Max-Age=" + maxAge;
+    var value = "v=" + version + "&c=" + Array.from(next).sort().join(",") + "&t=" + Math.floor(Date.now() / 1000);
+    var cookie = COOKIE + "=" + value + "; Path=/; SameSite=Lax; Max-Age=" + maxAge;
     if (location.protocol === "https:") cookie += "; Secure";
     document.cookie = cookie;
+    if (rawCookie(document.cookie) !== value) {
+      // Another collage_consent (a longer Path, or a parent domain) reads first.
+      console.warn("elagoht/consent: the saved choice is shadowed by another collage_consent cookie");
+    }
     if (dialog && dialog.open) closeDialog();
     gate();
     document.dispatchEvent(new CustomEvent("collage:consent", { detail: grantedList() }));
+    var withdrawn = false;
+    activated.forEach(function (n) {
+      if (!isGranted(n)) withdrawn = true;
+    });
     if (withdrawn) location.reload(); // a script that has run cannot be undone
   }
 
+  // set merges obj into the choice the cookie holds now, not this tab's memory.
   function set(obj) {
-    var next = new Set(chosen);
+    var next = new Set(refresh());
     if (obj && typeof obj === "object") {
       Object.keys(obj).forEach(function (k) {
         if (!optional.has(k)) return;
@@ -199,8 +217,9 @@
         var a = old.attributes[i];
         if (a.name !== "type" && a.name !== "data-consent") s.setAttribute(a.name, a.value);
       }
+      if (old.nonce) s.nonce = old.nonce; // the browser hides the nonce attribute
       s.text = old.text;
-      if (s.hasAttribute("src")) {
+      if (s.hasAttribute("src") && !s.noModule) {
         s.async = false;
         waiting = true;
         var next = function () {
@@ -246,6 +265,7 @@
       var name = s.getAttribute("data-consent");
       if (taken.has(s) || !known(name) || !isGranted(name)) return;
       taken.add(s);
+      activated.add(name);
       queue.push(s);
     });
     pump();
@@ -254,6 +274,7 @@
       if (!known(name)) return;
       if (isGranted(name)) {
         if (!f.hasAttribute("src")) f.setAttribute("src", f.getAttribute("data-src"));
+        activated.add(name);
         var p = placeholders.get(f);
         if (p) {
           p.remove();
@@ -343,6 +364,9 @@
 
     choices = document.createElement("fieldset");
     choices.hidden = true;
+    var legend = document.createElement("legend");
+    legend.textContent = text.settings || "";
+    choices.append(legend);
     (cfg.categories || []).forEach(function (c) {
       var label = document.createElement("label");
       var box = document.createElement("input");
@@ -420,12 +444,12 @@
   function open() {
     if (!dialog) build();
     if (dialog.open) return;
+    refresh();
     // Boxes show the current decision. Without one nothing optional is ticked:
-    // under GPC that is the signal's own default, and otherwise boxes are never
-    // pre-ticked.
-    var gpc = !decided && navigator.globalPrivacyControl === true;
+    // under GPC (navigator.globalPrivacyControl) that is the signal's own
+    // default, and otherwise boxes are never pre-ticked either.
     optional.forEach(function (n) {
-      boxes[n].checked = gpc ? false : chosen.has(n);
+      boxes[n].checked = chosen.has(n);
     });
     choices.hidden = true;
     saveBtn.hidden = true;
@@ -460,6 +484,30 @@
     e.preventDefault();
     open();
   });
+
+  // Gated nodes added later (by a router, a fragment swap, a script) are gated
+  // too: one coalesced pass per batch of mutations, against the cookie as it is.
+  var GATED = 'script[type="text/plain"][data-consent], iframe[data-consent][data-src]';
+  var pending = false;
+  function regate() {
+    pending = false;
+    refresh();
+    gate();
+  }
+  new MutationObserver(function (records) {
+    if (pending) return;
+    for (var i = 0; i < records.length; i++) {
+      var added = records[i].addedNodes;
+      for (var j = 0; j < added.length; j++) {
+        var n = added[j];
+        if (n.nodeType === 1 && (n.matches(GATED) || n.querySelector(GATED))) {
+          pending = true;
+          queueMicrotask(regate);
+          return;
+        }
+      }
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
 
   addStyle();
   gate();

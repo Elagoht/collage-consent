@@ -56,7 +56,7 @@ func findChrome() string {
 // The head script runs before consent.js (which is deferred): it records what the
 // page does, seeds the cookie and fakes GPC, as each scenario's query asks.
 const browserLayout = `<!doctype html><html><head><title>t</title>
-<script>
+<script nonce="abc">
 (function () {
   var q = new URLSearchParams(location.search);
   window.order = []; window.warns = []; window.errors = []; window.events = []; window.cookieWrites = [];
@@ -75,6 +75,7 @@ const browserLayout = `<!doctype html><html><head><title>t</title>
     sessionStorage.setItem("loads", String(window.loads));
   } catch (e) { window.loads = -1; }
   if (q.get("seed") !== null && window.loads === 1) d.set.call(document, "collage_consent=" + q.get("seed") + "; Path=/");
+  if (q.get("nomodal") === "1") delete HTMLDialogElement.prototype.showModal;
   if (q.get("gpc") === "1") {
     Object.defineProperty(Navigator.prototype, "globalPrivacyControl", { configurable: true, get: function () { return true; } });
   }
@@ -92,7 +93,8 @@ const browserContent = `<button id="opener">opener</button>
 <script type="text/plain" data-consent="analytics">window.order.push("inline"); window.ran = true;</script>
 <script type="text/plain" data-consent="bogus">window.bogusRan = true;</script>
 <iframe id="media" data-consent="media" data-src="/_test/files/frame.html" title="media"></iframe>
-<script>
+<span id="extra"></span>
+<script nonce="abc">
 (function () {
   var q = new URLSearchParams(location.search);
   var sc = q.get("scenario");
@@ -139,7 +141,59 @@ const browserContent = `<button id="opener">opener</button>
   function post(o) {
     return fetch("/_test/result", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(o) });
   }
+  function gated(category, attrs, text) {
+    var s = document.createElement("script");
+    s.type = "text/plain";
+    s.setAttribute("data-consent", category);
+    for (var k in attrs) s.setAttribute(k, attrs[k]);
+    if (text) s.text = text;
+    return s;
+  }
   var S = {
+    stale: async function () {
+      if (window.loads !== 1) return snap({ stash: JSON.parse(sessionStorage.getItem("stash") || "null") });
+      collageConsent.set({ analytics: true });
+      await until(function () { return window.order.length >= 2; }, 3000);
+      if (q.get("how") === "clear") document.cookie = "collage_consent=; Path=/; Max-Age=0";
+      else document.cookie = "collage_consent=v=1&c=&t=1; Path=/";
+      collageConsent.set({ media: true });
+      sessionStorage.setItem("stash", JSON.stringify({ cookie: cookie(), granted: collageConsent.get() }));
+      await sleep(3000);
+      return snap({ error: "the page did not reload after its running category was withdrawn elsewhere" });
+    },
+    late_granted: async function () {
+      await until(function () { return window.order.length >= 2; }, 3000);
+      var wrap = document.createElement("div");
+      wrap.append(gated("analytics", { src: "/_test/files/b.js" }), gated("analytics", {}, 'window.order.push("late");'));
+      document.body.append(wrap);
+      await until(function () { return window.order.length >= 4; }, 3000);
+      await sleep(200);
+      return snap();
+    },
+    late_iframe: async function () {
+      var f = document.createElement("iframe");
+      f.id = "late"; f.setAttribute("data-consent", "media"); f.setAttribute("data-src", "/_test/files/frame.html");
+      document.body.append(f);
+      await sleep(300);
+      var p = f.previousElementSibling;
+      return snap({ checks: {
+        placeholder: !!p && p.classList.contains("collage-consent-placeholder"),
+        noSrc: !f.hasAttribute("src")
+      } });
+    },
+    late_withdrawn: async function () {
+      await until(function () { return window.order.length >= 2; }, 3000);
+      document.cookie = "collage_consent=v=1&c=&t=1; Path=/";
+      document.body.append(gated("analytics", {}, 'window.order.push("late");'));
+      await sleep(500);
+      return snap();
+    },
+    after_set: async function () {
+      collageConsent.set({ analytics: true });
+      await until(function () { return window.order.length >= Number(q.get("want")); }, 3000);
+      await sleep(500);
+      return snap();
+    },
     gate_inert_before_grant: async function () {
       await sleep(300);
       return snap({ checks: {
@@ -197,7 +251,7 @@ const browserContent = `<button id="opener">opener</button>
       return snap({ error: "the page did not reload after a withdrawal" });
     },
     gpc_defaults: async function () {
-      var c = { gpc: navigator.globalPrivacyControl === true, openOnLoad: isOpen() };
+      var c = { gpc: (navigator.globalPrivacyControl === true) === (q.get("gpc") === "1"), openOnLoad: isOpen() };
       var before = collageConsent.get();
       button("Choose").click();
       c.analyticsOff = !box("analytics").checked;
@@ -222,6 +276,7 @@ const browserContent = `<button id="opener">opener</button>
     focus: async function () {
       var c = {}; var opener = document.getElementById("opener");
       c.openOnLoad = isOpen();
+      c.modalAsAsked = (typeof dialog().showModal === "function") === (q.get("nomodal") !== "1");
       c.focusInside = isOpen() && dialog().contains(document.activeElement);
       var f = focusables(); var first = f[0]; var last = f[f.length - 1];
       c.severalFocusables = f.length >= 3;
@@ -286,6 +341,10 @@ type observed struct {
 	Checks       map[string]bool `json:"checks"`
 	Cookies      []string        `json:"cookies"`
 	Before       []string        `json:"before"`
+	Stash        *struct {
+		Cookie  string   `json:"cookie"`
+		Granted []string `json:"granted"`
+	} `json:"stash"`
 }
 
 func browserConfig() Config {
@@ -303,7 +362,7 @@ func browserConfig() Config {
 
 // serveBrowserSite starts a real app with cfg on a free loopback port and returns
 // its base URL and the channel the page's result arrives on.
-func serveBrowserSite(t *testing.T, cfg Config) (string, <-chan []byte) {
+func serveBrowserSite(t *testing.T, cfg Config, extra, csp string) (string, <-chan []byte) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -314,7 +373,7 @@ func serveBrowserSite(t *testing.T, cfg Config) (string, <-chan []byte) {
 		Server: collage.ServerConfig{Host: "127.0.0.1", Port: port},
 		Template: collage.TemplateConfig{FS: fstest.MapFS{
 			"t/layout.html":  {Data: []byte(browserLayout)},
-			"t/content.html": {Data: []byte(browserContent)},
+			"t/content.html": {Data: []byte(strings.Replace(browserContent, `<span id="extra"></span>`, extra, 1))},
 		}, Root: "t"},
 		Locale:  collage.LocaleConfig{Default: "en", Supported: []string{"en"}},
 		Plugins: []collage.Plugin{NewWith(cfg)},
@@ -329,6 +388,7 @@ func serveBrowserSite(t *testing.T, cfg Config) (string, <-chan []byte) {
 	}
 	if err := a.Mount("/_test/files/", fstest.MapFS{
 		"a.js":       {Data: []byte(`window.order.push("src");`)},
+		"b.js":       {Data: []byte(`window.order.push("b");`)},
 		"frame.html": {Data: []byte(`<!doctype html><title>frame</title><p>frame</p>`)},
 	}); err != nil {
 		t.Fatal(err)
@@ -352,7 +412,15 @@ func serveBrowserSite(t *testing.T, cfg Config) (string, <-chan []byte) {
 	if err := a.Start(); err != nil {
 		t.Fatal(err)
 	}
-	srv := &http.Server{Handler: a.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	h := a.Handler()
+	if csp != "" {
+		inner := h
+		h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Security-Policy", csp)
+			inner.ServeHTTP(w, r)
+		})
+	}
+	srv := &http.Server{Handler: h, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() { _ = srv.Close() })
 	return "http://127.0.0.1:" + strconv.Itoa(port), results
@@ -409,7 +477,10 @@ type browserScenario struct {
 	cfg    func(*Config)
 	seed   string // a raw collage_consent value set before consent.js runs
 	gpc    bool
-	checks []string // names the page must report, each true
+	params url.Values // more query parameters for the page
+	extra  string     // markup added after the shared gate markup
+	csp    string     // a Content-Security-Policy header for every response
+	checks []string   // names the page must report, each true
 	check  func(*testing.T, observed)
 }
 
@@ -608,6 +679,96 @@ func browserScenarios() []browserScenario {
 			},
 		},
 		{
+			name: "stale_tab_withdrawn", page: "stale", params: url.Values{"how": {"withdraw"}},
+			check: func(t *testing.T, o observed) {
+				if o.Stash == nil {
+					t.Fatal("first load stashed nothing")
+				}
+				if m := cookieValue.FindStringSubmatch(o.Stash.Cookie); m == nil || m[2] != "media" {
+					t.Errorf("cookie after set({media:true}) in a stale tab = %q, want c=media", o.Stash.Cookie)
+				}
+				wantGranted(t, o.Stash.Granted, "essential", "media")
+				if o.Loads != 2 {
+					t.Errorf("loads = %d: the tab that ran analytics did not reload", o.Loads)
+				}
+				wantGranted(t, o.Granted, "essential", "media")
+				if o.Ran || len(o.Order) != 0 {
+					t.Errorf("analytics ran after reload: %q", o.Order)
+				}
+			},
+		},
+		{
+			name: "stale_tab_cleared", page: "stale", params: url.Values{"how": {"clear"}},
+			check: func(t *testing.T, o observed) {
+				if o.Stash == nil {
+					t.Fatal("first load stashed nothing")
+				}
+				if m := cookieValue.FindStringSubmatch(o.Stash.Cookie); m == nil || m[2] != "media" {
+					t.Errorf("cookie after set({media:true}) in a stale tab = %q, want c=media", o.Stash.Cookie)
+				}
+				wantGranted(t, o.Stash.Granted, "essential", "media")
+				if o.Loads != 2 {
+					t.Errorf("loads = %d: the tab that ran analytics did not reload", o.Loads)
+				}
+				wantGranted(t, o.Granted, "essential", "media")
+				if o.Ran || len(o.Order) != 0 {
+					t.Errorf("analytics ran after reload: %q", o.Order)
+				}
+			},
+		},
+		{
+			name: "late_granted", seed: "v=1&c=analytics&t=1",
+			check: func(t *testing.T, o observed) {
+				if !slices.Equal(o.Order, []string{"src", "inline", "b", "late"}) {
+					t.Errorf("order = %q, want [src inline b late]", o.Order)
+				}
+			},
+		},
+		{
+			name: "late_iframe", seed: "v=1&c=&t=1",
+			checks: []string{"placeholder", "noSrc"},
+		},
+		{
+			name: "late_withdrawn", seed: "v=1&c=analytics&t=1",
+			check: func(t *testing.T, o observed) {
+				if !slices.Equal(o.Order, []string{"src", "inline"}) {
+					t.Errorf("order = %q: a late node ran in a category withdrawn in the cookie", o.Order)
+				}
+			},
+		},
+		{
+			name: "csp_nonce", page: "after_set", params: url.Values{"want": {"2"}},
+			csp:   "script-src 'self' 'nonce-abc'",
+			extra: `<script type="text/plain" data-consent="analytics" nonce="abc">window.order.push("nonce");</script>`,
+			check: func(t *testing.T, o observed) {
+				if !slices.Equal(o.Order, []string{"src", "nonce"}) {
+					t.Errorf("order = %q, want [src nonce]", o.Order)
+				}
+				if o.Ran {
+					t.Error("a gated inline script without the nonce ran under the CSP")
+				}
+			},
+		},
+		{
+			name: "nomodule", page: "after_set", params: url.Values{"want": {"3"}},
+			extra: `<script type="text/plain" data-consent="analytics" src="/_test/files/b.js" nomodule></script>
+<script type="text/plain" data-consent="analytics">window.order.push("after-nomodule");</script>`,
+			check: func(t *testing.T, o observed) {
+				if !slices.Equal(o.Order, []string{"src", "inline", "after-nomodule"}) {
+					t.Errorf("order = %q: a nomodule script stalled the queue or ran", o.Order)
+				}
+			},
+		},
+		{
+			name: "gpc_defaults/no_gpc", page: "gpc_defaults",
+			checks: []string{"gpc", "openOnLoad", "analyticsOff", "mediaOff", "essentialOnAndFixed"},
+			check: func(t *testing.T, o observed) {
+				if !slices.Equal(o.Before, []string{"essential"}) {
+					t.Errorf("granted before deciding = %q", o.Before)
+				}
+			},
+		},
+		{
 			name:   "gpc_defaults",
 			gpc:    true,
 			checks: []string{"gpc", "openOnLoad", "analyticsOff", "mediaOff", "essentialOnAndFixed"},
@@ -631,7 +792,18 @@ func browserScenarios() []browserScenario {
 		},
 		{
 			name: "focus",
-			checks: []string{"openOnLoad", "focusInside", "severalFocusables", "tabMoves", "tabWraps", "shiftTabWraps",
+			checks: []string{"openOnLoad", "modalAsAsked", "focusInside", "severalFocusables", "tabMoves", "tabWraps", "shiftTabWraps",
+				"escapeCloses", "focusReturned", "reopened", "cancelCloses", "focusReturned2"},
+			check: func(t *testing.T, o observed) {
+				if o.Cookie != "" || len(o.CookieWrites) != 0 || len(o.Events) != 0 {
+					t.Errorf("closing decided: cookie=%q writes=%q events=%q", o.Cookie, o.CookieWrites, o.Events)
+				}
+				wantGranted(t, o.Granted, "essential")
+			},
+		},
+		{
+			name: "focus/nomodal", page: "focus", params: url.Values{"nomodal": {"1"}},
+			checks: []string{"openOnLoad", "modalAsAsked", "focusInside", "severalFocusables", "tabMoves", "tabWraps", "shiftTabWraps",
 				"escapeCloses", "focusReturned", "reopened", "cancelCloses", "focusReturned2"},
 			check: func(t *testing.T, o observed) {
 				if o.Cookie != "" || len(o.CookieWrites) != 0 || len(o.Events) != 0 {
@@ -648,10 +820,37 @@ func browserScenarios() []browserScenario {
 	}
 }
 
+// browserChrome is the Chrome to run, or why the browser tests skip. On CI
+// (CI=true) they run only when CHROME is set explicitly.
+func browserChrome() (path, skipReason string) {
+	if _, set := os.LookupEnv("CHROME"); !set && os.Getenv("CI") == "true" {
+		return "", "CI: set CHROME to run the browser tests"
+	}
+	if c := findChrome(); c != "" {
+		return c, ""
+	}
+	return "", "no Chrome: set CHROME or install Google Chrome to run the browser tests"
+}
+
+func TestBrowserChrome_CISkips(t *testing.T) {
+	t.Setenv("CI", "true")
+	t.Setenv("CHROME", "")
+	if err := os.Unsetenv("CHROME"); err != nil {
+		t.Fatal(err)
+	}
+	if p, why := browserChrome(); p != "" || why != "CI: set CHROME to run the browser tests" {
+		t.Errorf("CI without CHROME: path %q, reason %q", p, why)
+	}
+	t.Setenv("CHROME", "/nonexistent")
+	if p, why := browserChrome(); p != "" || !strings.HasPrefix(why, "no Chrome") {
+		t.Errorf("CI with CHROME=/nonexistent: path %q, reason %q", p, why)
+	}
+}
+
 func TestBrowser(t *testing.T) {
-	chrome := findChrome()
+	chrome, why := browserChrome()
 	if chrome == "" {
-		t.Skip("no Chrome: set CHROME or install Google Chrome to run the browser tests")
+		t.Skip(why)
 	}
 	for _, sc := range browserScenarios() {
 		t.Run(sc.name, func(t *testing.T) {
@@ -659,7 +858,7 @@ func TestBrowser(t *testing.T) {
 			if sc.cfg != nil {
 				sc.cfg(&cfg)
 			}
-			base, results := serveBrowserSite(t, cfg)
+			base, results := serveBrowserSite(t, cfg, sc.extra, sc.csp)
 			page := sc.page
 			if page == "" {
 				page = sc.name
@@ -670,6 +869,9 @@ func TestBrowser(t *testing.T) {
 			}
 			if sc.gpc {
 				q.Set("gpc", "1")
+			}
+			for k, v := range sc.params {
+				q[k] = v
 			}
 			raw := runChrome(t, chrome, base+"/?"+q.Encode(), results)
 			var o observed
