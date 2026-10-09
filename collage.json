@@ -3,6 +3,18 @@
   "name": "elagoht/consent",
   "description": "A collage plugin with a cookie-consent banner, a gate that holds scripts and iframes back until their category is granted, and a JS API.",
   "repository": "https://github.com/Elagoht/collage-consent",
+  "attributes": [
+    {
+      "name": "data-consent",
+      "value": "${1:analytics}",
+      "doc": "collage-consent: holds this element back until the category is granted — a `<script type=\"text/plain\">` runs, an `<iframe data-src>` gets its `src`."
+    },
+    {
+      "name": "data-consent-open",
+      "value": null,
+      "doc": "collage-consent: a click on this element reopens the consent banner."
+    }
+  ],
   "config": {
     "type": "object",
     "description": "A collage plugin with a cookie-consent banner, a gate that holds scripts and iframes back until their category is granted, and a JS API.",
