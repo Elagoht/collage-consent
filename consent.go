@@ -4,6 +4,10 @@ package consent
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"html/template"
+	"sync/atomic"
 
 	"github.com/Elagoht/collage/pkg/collage"
 )
@@ -14,6 +18,11 @@ const Name = "elagoht/consent"
 // Plugin is the consent plugin.
 type Plugin struct {
 	cfg Config
+	// tags is the hoisted script element per locale; def is the default
+	// locale's key, used for a locale with no entry.
+	tags   map[string]template.HTML
+	def    string
+	inited atomic.Bool
 }
 
 // New returns a plugin configured entirely from the application's configuration.
@@ -27,20 +36,53 @@ func (p *Plugin) Name() string                   { return Name }
 func (p *Plugin) Version() string                { return "0.1.0" }
 func (p *Plugin) Shutdown(context.Context) error { return nil }
 
-var _ collage.Plugin = (*Plugin)(nil)
+var (
+	_ collage.Plugin           = (*Plugin)(nil)
+	_ collage.BeforeRenderHook = (*Plugin)(nil)
+)
 
-// Init reads the configuration, applies the defaults and checks it against the
-// default locale.
+// Init reads the configuration, applies the defaults, checks it against the
+// default locale, builds the script element for each locale and mounts consent.js.
+// A Plugin value serves one App: once an Init has succeeded, another fails, since
+// the value keeps that App's configuration.
 func (p *Plugin) Init(_ context.Context, host collage.Host) error {
+	if p.inited.Load() {
+		return errors.New("elagoht/consent: a Plugin value serves one App; create another with New")
+	}
 	cfg, err := collage.PluginConfig(host, p.cfg)
 	if err != nil {
 		return err
 	}
 	cfg = cfg.withDefaults()
-	def, _ := host.Locales()
+	def, locales := host.Locales()
 	if err := cfg.validate(def); err != nil {
 		return err
 	}
-	p.cfg = cfg
+	tags := make(map[string]template.HTML, len(locales)+1)
+	for _, l := range append([]string{def}, locales...) {
+		if tags[l], err = scriptTag(cfg, l, def); err != nil {
+			return err
+		}
+	}
+	if err := host.Mount(scriptPrefix, scriptFS, collage.WithCacheControl(longCache)); err != nil {
+		return fmt.Errorf("elagoht/consent: serve consent.js: %w", err)
+	}
+	p.cfg, p.tags, p.def = cfg, tags, def
+	p.inited.Store(true)
+	return nil
+}
+
+// OnBeforeRender hoists the script element into the page's head, in the page's
+// locale. Hoisted at depth zero under "consent", so it appears once however many
+// fragments the page has, and a page can replace it by declaring the same key.
+func (p *Plugin) OnBeforeRender(_ context.Context, ev *collage.BeforeRenderEvent) error {
+	if ev.Context == nil || p.tags == nil {
+		return nil
+	}
+	tag, ok := p.tags[ev.Context.Locale]
+	if !ok {
+		tag = p.tags[p.def]
+	}
+	ev.Context.Hoist("head", "consent", tag)
 	return nil
 }

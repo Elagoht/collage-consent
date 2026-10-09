@@ -36,6 +36,11 @@ func TestValidate_Table(t *testing.T) {
 		{"maxAge low", func(c *Config) { c.MaxAgeDays = -1 }, "maxAgeDays"},
 		{"maxAge high", func(c *Config) { c.MaxAgeDays = 401 }, "maxAgeDays"},
 		{"server path", func(c *Config) { c.ServerPaths = []string{"account"} }, "serverPaths"},
+		{"empty name", func(c *Config) { c.Categories[1].Name = "" }, "category name"},
+		{"unicode name", func(c *Config) { c.Categories[1].Name = "çerez" }, "category name"},
+		{"empty label", func(c *Config) { c.Text["en"].Categories["analytics"] = "" }, "label"},
+		{"maxAge 1", func(c *Config) { c.MaxAgeDays = 1 }, ""},
+		{"maxAge 400", func(c *Config) { c.MaxAgeDays = 400 }, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -127,5 +132,21 @@ func TestInit_Validates(t *testing.T) {
 	}
 	if p.Name() != Name || p.Version() != "0.1.0" {
 		t.Error("identity")
+	}
+}
+
+func TestInit_Version(t *testing.T) {
+	c := valid()
+	c.Version = 0
+	p := NewWith(c)
+	if err := build(t, p); err != nil {
+		t.Fatal(err)
+	}
+	if p.cfg.Version != 1 {
+		t.Errorf("version 0 became %d, want 1", p.cfg.Version)
+	}
+	c.Version = -1
+	if err := build(t, NewWith(c)); err == nil || !strings.Contains(err.Error(), "elagoht/consent: version -1") {
+		t.Errorf("version -1 err = %v", err)
 	}
 }
