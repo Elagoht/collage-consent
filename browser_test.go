@@ -74,7 +74,12 @@ const browserLayout = `<!doctype html><html><head><title>t</title>
     window.loads = Number(sessionStorage.getItem("loads") || "0") + 1;
     sessionStorage.setItem("loads", String(window.loads));
   } catch (e) { window.loads = -1; }
-  if (q.get("seed") !== null && window.loads === 1) d.set.call(document, "collage_consent=" + q.get("seed") + "; Path=/");
+  window.seedStored = null;
+  if (q.get("seed") !== null && window.loads === 1) {
+    d.set.call(document, "collage_consent=" + q.get("seed") + "; Path=/");
+    var stored = d.get.call(document).split("; ").filter(function (p) { return p.indexOf("collage_consent=") === 0; });
+    window.seedStored = stored.length === 1 && stored[0] === "collage_consent=" + q.get("seed");
+  }
   if (q.get("nomodal") === "1") delete HTMLDialogElement.prototype.showModal;
   if (q.get("gpc") === "1") {
     Object.defineProperty(Navigator.prototype, "globalPrivacyControl", { configurable: true, get: function () { return true; } });
@@ -133,7 +138,7 @@ const browserContent = `<button id="opener">opener</button>
       iframeSrc: document.getElementById("media").getAttribute("src") || "",
       dialogOpen: isOpen(), granted: cc ? cc.get() : [], cookie: cookie(),
       cookieWrites: window.cookieWrites, events: window.events, warns: window.warns,
-      errors: window.errors, loads: window.loads, checks: {}
+      errors: window.errors, loads: window.loads, seedStored: window.seedStored, checks: {}
     };
     for (var k in extra || {}) o[k] = extra[k];
     return o;
@@ -345,6 +350,7 @@ type observed struct {
 	Warns        []string        `json:"warns"`
 	Errors       []string        `json:"errors"`
 	Loads        int             `json:"loads"`
+	SeedStored   *bool           `json:"seedStored"`
 	Checks       map[string]bool `json:"checks"`
 	Cookies      []string        `json:"cookies"`
 	Before       []string        `json:"before"`
@@ -891,6 +897,11 @@ func TestBrowser(t *testing.T) {
 			}
 			if len(o.Errors) != 0 {
 				t.Errorf("page errors: %q", o.Errors)
+			}
+			// The seed must be what the page's cookie holds, so a scenario tests the
+			// value it names and not one the browser rewrote or refused.
+			if sc.seed != "" && o.Loads == 1 && (o.SeedStored == nil || !*o.SeedStored) {
+				t.Errorf("the seeded cookie is not stored as %q", sc.seed)
 			}
 			if o.BogusRan {
 				t.Error("a script gated on an unknown category ran")

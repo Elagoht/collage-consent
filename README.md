@@ -197,6 +197,11 @@ It is set with `Path=/; SameSite=Lax; Max-Age=<maxAgeDays × 86400>`, plus `Secu
 on https. It is not `HttpOnly`, because the script reads it. The cookie belongs to
 the required category.
 
+Never set `collage_consent` from the server yourself. An `HttpOnly` cookie of that
+name is sent to the server, so `Granted` reads it. The script cannot see it, so the
+browser shows the banner and keeps everything gated while the server answers from
+a choice the visitor cannot change.
+
 Parsing is strict, and the browser and the server follow the same rules. A value
 counts as no decision when any of these holds:
 
@@ -220,11 +225,19 @@ are URL paths, so list each locale's spelling (`/shop`, `/tr/magaza`).
 
 On those paths, the plugin's middleware reads the cookie and reduces it to the
 granted optional categories, sorted and comma-joined (`""` when there are none). It
-declares that value with `collage.Vary(r, "Cookie", …)`, and `Granted` reads it back
-with `collage.Varied`. The page cache keys on the value, not on the raw cookie, so
-visitors who made the same choice share one entry. A page has at most
-2^(optional categories) entries. A malformed cookie is no decision and shares the
-entry of "nothing granted".
+puts that value in its own request header, `X-Collage-Consent`, which overrides
+anything a client sent, and declares it with `collage.Vary`. `Granted` reads it back
+with `collage.Varied`, never from the header itself.
+
+- **One entry per choice.** The page cache keys on the value, not on the raw cookie,
+  so visitors who made the same choice share one entry. A page has at most
+  2^(optional categories) entries. A malformed cookie is no decision and shares the
+  entry of "nothing granted".
+- **No other cookie in a shared render.** The cache does not vary on `Cookie`
+  itself, so collage keeps the `Cookie` header out of a cached page's render, as it
+  does everywhere. A handler there that reads a session cookie sees none, for every
+  visitor. Varying on `Cookie` instead would bake the first visitor's session into
+  the page served to everyone after.
 
 `Granted` answers as follows:
 
@@ -232,6 +245,9 @@ entry of "nothing granted".
 - **An unknown category:** false.
 - **Outside `serverPaths`:** false, and logs one warning per category. The warning
   usually means the path is missing from the list.
+- **Answered before the middleware ran:** false, with the same warning. This covers
+  a request on a `serverPaths` path that another plugin answered first, for example
+  with its own status page.
 - **In a static export or a build's capture request:** false, without a warning.
   There is no visitor, so an exported page always renders as "not granted". Decide
   in the browser on a static site.
@@ -240,8 +256,11 @@ The server cannot see GPC (below), so it honours what the visitor saved.
 
 ### The cost: `Vary: Cookie`
 
-Responses on `serverPaths` carry `Vary: Cookie`. That is what keeps a CDN or a
-browser cache from showing one visitor's page to another. But the `Cookie` header
+Every response on `serverPaths` carries `Vary: Cookie`, cacheable or not, since the
+middleware adds it before the response is known. Publicly cacheable ones also
+carry `X-Collage-Consent`, which collage adds from the declared dimension.
+`Vary: Cookie` is what keeps a CDN or a browser cache from showing one visitor's
+page to another. But the `Cookie` header
 differs between almost all visitors, because every other cookie is in it too. Most
 CDNs therefore treat such a response as practically uncacheable, or refuse to cache
 it at all. collage's own page cache is not affected, because it keys on the reduced
@@ -250,6 +269,17 @@ value.
 Keep `serverPaths` to the few pages whose HTML must differ by consent, and gate
 everything else in the browser. Each entry is a trade of CDN caching for a
 server-side answer.
+
+### Never cover stream paths
+
+A pushed fragment is rendered once and sent to every subscriber. On a live or
+WebSocket stream, a consent-dependent render would therefore reach every visitor
+with the first one's choice. The middleware never varies `/_live/` (collage-live's
+default prefix) or `/_collage/`, even when `serverPaths` is `/`, so `Granted` is
+false in what they render. Do not list a stream path of your own either, such as
+collage-live under another `prefix` or a WebSocket endpoint. A fix in collage
+itself, where `RenderFragment` stops reporting a varied request's render as
+shared, is a possible follow-up.
 
 ## Global Privacy Control and Do Not Track
 
@@ -294,9 +324,10 @@ server-side answer.
   cached. Nothing gated ever falls back to running.
 - **Other tabs.** A tab only learns of a choice made in another tab on its next
   save or its next load. A tab whose content ran keeps it until it reloads.
-- **Another `Vary` on `Cookie`.** A middleware that declares its own value for
-  `Cookie` with `collage.Vary` replaces the consent combo on the same request. The
-  last declaration wins, so do not vary on `Cookie` yourself on `serverPaths`.
+- **The `X-Collage-Consent` header is the plugin's.** Another middleware that
+  declares a value for it with `collage.Vary` replaces the consent combo on the same
+  request, because the last declaration wins. A `Vary` on `Cookie` by anyone else
+  is never read as consent.
 
 ## Out of scope
 

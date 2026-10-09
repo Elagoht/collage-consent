@@ -16,9 +16,19 @@ import (
 // cookieName is the consent cookie's name.
 const cookieName = "collage_consent"
 
-// varyHeader is the header the combo is varied on: the response depends on the
-// visitor's Cookie header, and a CDN must keep them apart on it.
-const varyHeader = "Cookie"
+// varyHeader is the plugin's own request header, which carries the visitor's
+// reduced choice and is what the page cache varies on. It is not Cookie: varying
+// on Cookie would make collage keep the whole Cookie header in a shared render,
+// and a handler there reading any other cookie (a session) would bake the first
+// visitor's value into the page every later visitor is served. The middleware
+// sets it on every request, over whatever a client sent, so only the plugin
+// speaks through it.
+const varyHeader = "X-Collage-Consent"
+
+// skipPrefixes are never varied, whatever serverPaths covers: a stream pushes one
+// fragment render to every subscriber (collage-live's /_live/), and /_collage/
+// holds static files, the plugin's own among them.
+var skipPrefixes = []string{"/_live", "/_collage"}
 
 // serverState is what Granted needs, set by the last successful Init.
 type serverState struct {
@@ -40,9 +50,10 @@ var active atomic.Pointer[serverState]
 //
 // The choice is readable only on a path under serverPaths, where the plugin's
 // middleware varies the page cache on it; everywhere else Granted reports false.
-// Outside serverPaths that is logged once per category, since the page's author
-// most likely forgot the path. A static build and a build's capture request are
-// not visitors, so there Granted is false without a word.
+// That is logged once per category, since the page's author most likely forgot
+// the path, or another plugin answered the request before the consent
+// middleware ran. A static build and a build's capture request are not visitors,
+// so there Granted is false without a word.
 //
 // Granted reads the configuration of the last App the plugin was initialised
 // for: one consent plugin per process.
@@ -65,7 +76,7 @@ func Granted(rc *collage.RenderContext, category string) bool {
 	if !ok {
 		if visitor(rc) {
 			if _, seen := st.warned.LoadOrStore(category, true); !seen {
-				st.logger.Warn(`elagoht/consent: Granted("`+category+`") is false here: the choice is not readable on the server on this path; add the path to serverPaths`,
+				st.logger.Warn(`elagoht/consent: Granted("`+category+`") is false: the choice was not read for this request; its path is not under serverPaths, or the request was answered before the consent middleware ran`,
 					"category", category, "path", rc.Request.URL.Path)
 			}
 		}
@@ -76,29 +87,39 @@ func Granted(rc *collage.RenderContext, category string) bool {
 
 // visitor reports whether rc renders for a visitor's request, which is when an
 // unreadable choice is worth a warning. A static build renders with a synthetic
-// request collage is not serving, which Vary tells apart: past routing it
-// refuses a served request as too late and a synthetic one as outside a request,
-// and in neither case declares anything. A build's capture request is served,
-// but it is the build, not a visitor.
+// request collage is not serving, which Vary tells apart: it answers
+// ErrVaryOutsideRequest for a request without collage's vary set, before it
+// looks at the header name. The empty name makes every other request an error
+// too, so the probe never declares anything, even for a page rendered before
+// routing (another plugin's early ServeStatus). A build's capture request is
+// served, but it is the build, not a visitor.
 func visitor(rc *collage.RenderContext) bool {
-	if collage.IsCapture(rc.Context()) {
+	if collage.IsCapture(rc.Request.Context()) {
 		return false
 	}
-	err := collage.Vary(rc.Request, varyHeader, "")
+	err := collage.Vary(rc.Request, "", "")
 	return !errors.Is(err, collage.ErrVaryOutsideRequest)
 }
 
-// middleware varies every request under cfg.ServerPaths on the visitor's choice:
-// the granted non-required categories, sorted and comma-joined, "" for none. The
-// cache keys on that, not the raw cookie, so visitors with one choice share an
-// entry. A build's capture request is varied like any other: it has no cookie, so
-// its combo is "", and collage keeps Vary out of the headers it deploys.
+// middleware reads the visitor's choice on every request under cfg.ServerPaths,
+// but not under skipPrefixes: the granted non-required categories, sorted and
+// comma-joined, "" for none. It puts that in varyHeader and declares it with
+// collage.Vary, so the cache keys on the choice, not the raw cookie, and visitors
+// with one choice share an entry; setting the header overrides any value a
+// client sent, and Granted reads only the declared value, never the header. The
+// response also says Vary: Cookie, because that is the header a CDN sees the
+// choice in. A build's capture request is varied
+// like any other: it has no cookie, so its combo is "", and collage keeps Vary
+// out of the headers it deploys.
 func middleware(cfg Config, logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if underPaths(r.URL.Path, cfg.ServerPaths) {
+			if underPaths(r.URL.Path, cfg.ServerPaths) && !underPaths(r.URL.Path, skipPrefixes) {
 				granted, _ := readCookie(r, cfg)
-				if err := collage.Vary(r, varyHeader, strings.Join(granted, ",")); err != nil {
+				combo := strings.Join(granted, ",")
+				r.Header.Set(varyHeader, combo)
+				w.Header().Add("Vary", "Cookie")
+				if err := collage.Vary(r, varyHeader, combo); err != nil {
 					logger.Warn("elagoht/consent: cannot vary on the consent cookie", "path", r.URL.Path, "error", err)
 				}
 			}
