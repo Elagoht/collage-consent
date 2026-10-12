@@ -376,7 +376,7 @@ type observed struct {
 
 // serveBrowserSite starts a real app with cfg on a free loopback port and returns
 // its base URL and the channel the page's result arrives on.
-func serveBrowserSite(t *testing.T, cfg Config, extra, csp string) (string, <-chan []byte) {
+func serveBrowserSite(t *testing.T, cfg Options, extra, csp string) (string, <-chan []byte) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -390,7 +390,7 @@ func serveBrowserSite(t *testing.T, cfg Config, extra, csp string) (string, <-ch
 			"t/content.html": {Data: []byte(strings.Replace(browserContent, `<span id="extra"></span>`, extra, 1))},
 		}, Root: "t"},
 		Locale:  collage.LocaleConfig{Default: "en", Supported: []string{"en"}},
-		Plugins: []collage.Plugin{NewWith(cfg)},
+		Plugins: []collage.Plugin{New(cfg)},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -488,7 +488,7 @@ func runChrome(t *testing.T, chrome, pageURL string, results <-chan []byte) []by
 type browserScenario struct {
 	name   string // the subtest's name
 	page   string // ?scenario=; name when empty
-	cfg    func(*Config)
+	cfg    func(*Options)
 	seed   string // a raw collage_consent value set before consent.js runs
 	gpc    bool
 	params url.Values // more query parameters for the page
@@ -525,7 +525,7 @@ func browserScenarios() []browserScenario {
 	malformed := func(name, seed string, version int, dialog bool, granted ...string) browserScenario {
 		return browserScenario{
 			name: "malformed_cookie/" + name, page: "malformed_cookie", seed: seed,
-			cfg: func(c *Config) { c.Version = version },
+			cfg: func(c *Options) { c.Version = version },
 			check: func(t *testing.T, o observed) {
 				if o.DialogOpen != dialog {
 					t.Errorf("dialog open = %v, want %v", o.DialogOpen, dialog)
@@ -631,7 +631,7 @@ func browserScenarios() []browserScenario {
 		},
 		{
 			name: "version_bump",
-			cfg:  func(c *Config) { c.Version = 2 },
+			cfg:  func(c *Options) { c.Version = 2 },
 			seed: "v=1&c=analytics&t=1",
 			check: func(t *testing.T, o observed) {
 				if !o.DialogOpen {
@@ -643,7 +643,7 @@ func browserScenarios() []browserScenario {
 		},
 		{
 			name: "cookie_honoured",
-			cfg:  func(c *Config) { c.Version = 2 },
+			cfg:  func(c *Options) { c.Version = 2 },
 			seed: "v=2&c=analytics&t=1",
 			check: func(t *testing.T, o observed) {
 				if o.DialogOpen {
@@ -797,12 +797,12 @@ func browserScenarios() []browserScenario {
 		},
 		{
 			name: "text_is_text",
-			cfg: func(c *Config) {
-				en := c.Text["en"]
+			cfg: func(c *Options) {
+				en := c.Text
 				en.Title = "<b>Cookies</b>"
 				en.Body = "<img src=x onerror=window.pwned=1>"
 				en.Placeholder = "<img src=y> {host}"
-				c.Text["en"] = en
+				c.Text = en
 			},
 			checks: []string{"noImg", "noB", "bodyLiteral", "titleLiteral", "placeholderLiteral", "notPwned"},
 		},
@@ -830,10 +830,10 @@ func browserScenarios() []browserScenario {
 		},
 		{
 			name: "policy_label", params: url.Values{"want": {"Privacy policy"}},
-			cfg: func(c *Config) {
-				en := c.Text["en"]
+			cfg: func(c *Options) {
+				en := c.Text
 				en.Policy = "Privacy policy"
-				c.Text["en"] = en
+				c.Text = en
 			},
 			checks: []string{"label", "href"},
 		},

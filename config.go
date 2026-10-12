@@ -16,8 +16,8 @@ type Category struct {
 	Required bool `json:"required"`
 }
 
-// Text is the banner's wording in one locale. A key missing from a non-default
-// locale falls back to the default locale's.
+// Text is the banner's wording in one locale. In Options.Locales a key left
+// empty falls back to Options.Text's.
 type Text struct {
 	// Title is the banner's heading.
 	Title string `json:"title"`
@@ -41,14 +41,18 @@ type Text struct {
 	Categories map[string]string `json:"categories"`
 }
 
-// Config is the plugin's configuration.
-type Config struct {
+// Options configures the plugin.
+type Options struct {
 	// Version is bumped to ask every visitor again. Default 1.
 	Version int `json:"version"`
 	// Categories are the kinds of processing; at least one is required.
 	Categories []Category `json:"categories"`
-	// Text is the wording per locale; the default locale must be present.
-	Text map[string]Text `json:"text"`
+	// Text is the wording in the application's default locale. It must label
+	// every category.
+	Text Text `json:"text"`
+	// Locales holds the wording of each other locale, by locale; a key left
+	// empty falls back to Text's.
+	Locales map[string]Text `json:"locales"`
 	// PolicyURL links the banner to the privacy policy.
 	PolicyURL string `json:"policyURL"`
 	// MaxAgeDays is how long the choice is remembered, 1 to 400. Default 180.
@@ -61,7 +65,7 @@ type Config struct {
 
 var categoryName = regexp.MustCompile(`^[a-z0-9-]+$`)
 
-func (c Config) withDefaults() Config {
+func (c Options) withDefaults() Options {
 	if c.Version == 0 {
 		c.Version = 1
 	}
@@ -71,41 +75,40 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
-func (c Config) validate(defaultLocale string) error {
+func (c Options) validate(defaultLocale string) error {
 	if len(c.Categories) == 0 {
-		return fmt.Errorf("elagoht/consent: no categories configured")
+		return fmt.Errorf("consent: no categories configured")
 	}
 	seen := map[string]bool{}
 	for _, cat := range c.Categories {
 		if !categoryName.MatchString(cat.Name) {
-			return fmt.Errorf("elagoht/consent: category name %q must match ^[a-z0-9-]+$", cat.Name)
+			return fmt.Errorf("consent: category name %q must match ^[a-z0-9-]+$", cat.Name)
 		}
 		if seen[cat.Name] {
-			return fmt.Errorf("elagoht/consent: duplicate category %q", cat.Name)
+			return fmt.Errorf("consent: duplicate category %q", cat.Name)
 		}
 		seen[cat.Name] = true
 	}
 	if c.Version < 1 {
-		return fmt.Errorf("elagoht/consent: version %d must be at least 1", c.Version)
+		return fmt.Errorf("consent: version %d must be at least 1", c.Version)
 	}
-	t, ok := c.Text[defaultLocale]
-	if !ok {
-		return fmt.Errorf("elagoht/consent: no text for the default locale %q", defaultLocale)
+	if _, ok := c.Locales[defaultLocale]; ok {
+		return fmt.Errorf("consent: locales has the default locale %q; its wording is text", defaultLocale)
 	}
 	for _, cat := range c.Categories {
-		if t.Categories[cat.Name] == "" {
-			return fmt.Errorf("elagoht/consent: no label for category %q in locale %q", cat.Name, defaultLocale)
+		if c.Text.Categories[cat.Name] == "" {
+			return fmt.Errorf("consent: text has no label for category %q", cat.Name)
 		}
 	}
 	if c.MaxAgeDays < 1 || c.MaxAgeDays > 400 {
-		return fmt.Errorf("elagoht/consent: maxAgeDays %d must be between 1 and 400", c.MaxAgeDays)
+		return fmt.Errorf("consent: maxAgeDays %d must be between 1 and 400", c.MaxAgeDays)
 	}
 	if err := checkPolicyURL(c.PolicyURL); err != nil {
 		return err
 	}
 	for _, p := range c.ServerPaths {
 		if !strings.HasPrefix(p, "/") {
-			return fmt.Errorf("elagoht/consent: serverPaths entry %q must begin with /", p)
+			return fmt.Errorf("consent: serverPaths entry %q must begin with /", p)
 		}
 	}
 	return nil
@@ -125,21 +128,21 @@ func checkPolicyURL(v string) error {
 	if err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
 		return nil
 	}
-	return fmt.Errorf("elagoht/consent: policyURL %q must be a path beginning with / or an absolute http(s) URL", v)
+	return fmt.Errorf("consent: policyURL %q must be a path beginning with / or an absolute http(s) URL", v)
 }
 
 // textFor is the wording for locale, each key falling back to the default
 // locale's. The result shares nothing with the configuration.
-func (c Config) textFor(locale, defaultLocale string) Text {
-	out := c.Text[defaultLocale]
+func (c Options) textFor(locale, defaultLocale string) Text {
+	out := c.Text
 	out.Categories = make(map[string]string, len(out.Categories))
-	for k, v := range c.Text[defaultLocale].Categories {
+	for k, v := range c.Text.Categories {
 		out.Categories[k] = v
 	}
 	if locale == defaultLocale {
 		return out
 	}
-	t, ok := c.Text[locale]
+	t, ok := c.Locales[locale]
 	if !ok {
 		return out
 	}
@@ -161,7 +164,7 @@ func (c Config) textFor(locale, defaultLocale string) Text {
 }
 
 // required reports whether name is a configured category and whether it is required.
-func (c Config) required(name string) (known, required bool) {
+func (c Options) required(name string) (known, required bool) {
 	for _, cat := range c.Categories {
 		if cat.Name == name {
 			return true, cat.Required

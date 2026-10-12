@@ -1,8 +1,5 @@
 package consent
 
-// These tests share the package-level state Init sets (one consent plugin per
-// process), so none of them, nor any test that builds an app, runs in parallel.
-
 import (
 	"context"
 	"log/slog"
@@ -95,19 +92,19 @@ func TestUnderPaths(t *testing.T) {
 
 // browserLikeConfig has the browser tests' categories: essential (required),
 // analytics and media.
-func browserLikeConfig() Config {
+func browserLikeConfig() Options {
 	c := browserConfig()
 	return c.withDefaults()
 }
 
 // serverConfig adds ads and ads-personal, one name a prefix of the other, so a
 // substring test of the combo shows.
-func serverConfig() Config {
+func serverConfig() Options {
 	c := browserLikeConfig()
 	c.Categories = append(c.Categories, Category{Name: "ads"}, Category{Name: "ads-personal"})
-	en := c.Text["en"]
+	en := c.Text
 	en.Categories = map[string]string{"essential": "Essential", "analytics": "Analytics", "media": "Embedded media", "ads": "Ads", "ads-personal": "Personal ads"}
-	c.Text = map[string]Text{"en": en}
+	c.Text = en
 	return c
 }
 
@@ -227,7 +224,7 @@ func newServerSite(t *testing.T, o siteOpts) *serverSite {
 		Locale:  collage.LocaleConfig{Default: "en", Supported: []string{"en"}},
 		Cache:   collage.CacheConfig{Enabled: true},
 		Logger:  slog.New(s.logs),
-		Plugins: append(o.before, NewWith(cfg), s.probe),
+		Plugins: append(o.before, New(cfg), s.probe),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -371,7 +368,7 @@ func TestGranted_Required(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "essential=true bogus=false") {
 		t.Errorf("required/unknown: %s", para(w.Body.String()))
 	}
-	if !Granted(nil, "essential") || Granted(nil, "analytics") || Granted(nil, "bogus") {
+	if Granted(nil, "essential") || Granted(nil, "analytics") || Granted(nil, "bogus") {
 		t.Error("Granted with no render context")
 	}
 	if w := s.logs.warns(""); len(w) != 0 {
@@ -406,11 +403,11 @@ func TestGranted_StaticExport(t *testing.T) {
 	}
 }
 
-// The plugin keeps the configuration of the last App it was initialised for.
+// Without a render context there is no App to read, so nothing is granted,
+// not even a required category.
 func TestGranted_NoPlugin(t *testing.T) {
-	active.Store(nil)
 	if Granted(nil, "essential") {
-		t.Error("Granted without an initialised plugin")
+		t.Error("Granted without a render context")
 	}
 }
 
@@ -581,8 +578,10 @@ func TestGranted_HandBuiltContext(t *testing.T) {
 	if Granted(&collage.RenderContext{Request: r}, "analytics") {
 		t.Error("Granted on a hand-built context")
 	}
-	if !Granted(&collage.RenderContext{Request: r}, "essential") {
-		t.Error("a required category must stay granted")
+	// Outside any App's request, there is no configuration to read: even a
+	// required category is not granted.
+	if Granted(&collage.RenderContext{Request: r}, "essential") {
+		t.Error("a hand-built context outside a request read some App's configuration")
 	}
 }
 

@@ -17,21 +17,20 @@ const Name = "elagoht/consent"
 
 // Plugin is the consent plugin.
 type Plugin struct {
-	cfg Config
+	cfg Options
+	// state is what Granted reads for this App's renders and requests.
+	state *serverState
 	// tags is the hoisted script element for the default and every supported locale.
 	tags   map[string]template.HTML
 	inited atomic.Bool
 }
 
-// New returns a plugin configured entirely from the application's configuration.
-func New() *Plugin { return &Plugin{} }
-
-// NewWith returns a plugin with cfg as its starting point, which the application's
+// New returns a plugin with opts as its starting point, which the application's
 // own configuration is then decoded over.
-func NewWith(cfg Config) *Plugin { return &Plugin{cfg: cfg} }
+func New(opts Options) *Plugin { return &Plugin{cfg: opts} }
 
 func (p *Plugin) Name() string                   { return Name }
-func (p *Plugin) Version() string                { return "0.1.3" }
+func (p *Plugin) Version() string                { return "0.2.0" }
 func (p *Plugin) Shutdown(context.Context) error { return nil }
 
 var (
@@ -41,13 +40,13 @@ var (
 
 // Init reads the configuration, applies the defaults, checks it against the
 // default locale, builds the script element for each locale and mounts consent.js.
-// With serverPaths it adds the middleware that varies those paths on the cookie,
-// and it makes this App's configuration the one Granted reads.
+// It adds the middleware that hands each request this App's configuration, for
+// Granted, and varies serverPaths on the cookie.
 // A Plugin value serves one App: once an Init has succeeded, another fails, since
 // the value keeps that App's configuration.
 func (p *Plugin) Init(_ context.Context, host collage.Host) error {
 	if p.inited.Load() {
-		return errors.New("elagoht/consent: a Plugin value serves one App; create another with New")
+		return errors.New("consent: a Plugin value serves one App; create another with New")
 	}
 	cfg, err := collage.PluginConfig(host, p.cfg)
 	if err != nil {
@@ -65,16 +64,14 @@ func (p *Plugin) Init(_ context.Context, host collage.Host) error {
 		}
 	}
 	if err := host.Mount(scriptPrefix, scriptFS, collage.WithCacheControl(longCache)); err != nil {
-		return fmt.Errorf("elagoht/consent: serve consent.js: %w", err)
+		return fmt.Errorf("consent: serve consent.js: %w", err)
 	}
-	if len(cfg.ServerPaths) > 0 {
-		if err := host.Use(middleware(cfg, host.Logger())); err != nil {
-			return fmt.Errorf("elagoht/consent: read the cookie on serverPaths: %w", err)
-		}
+	state := &serverState{cfg: cfg, logger: host.Logger()}
+	if err := host.Use(middleware(state)); err != nil {
+		return fmt.Errorf("consent: read the cookie on serverPaths: %w", err)
 	}
-	p.cfg, p.tags = cfg, tags
+	p.cfg, p.tags, p.state = cfg, tags, state
 	p.inited.Store(true)
-	active.Store(&serverState{cfg: cfg, logger: host.Logger()})
 	return nil
 }
 
@@ -85,6 +82,7 @@ func (p *Plugin) OnBeforeRender(_ context.Context, ev *collage.BeforeRenderEvent
 	if ev.Context == nil || p.tags == nil {
 		return nil
 	}
+	stateKey.Set(ev.Context, p.state)
 	// Init built a tag for the default locale and every supported one, and collage
 	// refuses a page in any other locale, so a render's locale is always present.
 	ev.Context.Hoist("head", "consent", p.tags[ev.Context.Locale])

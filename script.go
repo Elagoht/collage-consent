@@ -50,7 +50,7 @@ type scriptConfig struct {
 // scriptTag is the script element for one locale. encoding/json escapes <, > and
 // &, and html.EscapeString then escapes the quotes, so no configured text can
 // leave the attribute.
-func scriptTag(cfg Config, locale, defaultLocale string) (template.HTML, error) {
+func scriptTag(cfg Options, locale, defaultLocale string) (template.HTML, error) {
 	data, err := json.Marshal(scriptConfig{
 		Version:    cfg.Version,
 		Categories: cfg.Categories,
@@ -59,7 +59,7 @@ func scriptTag(cfg Config, locale, defaultLocale string) (template.HTML, error) 
 		MaxAge:     cfg.MaxAgeDays * 86400,
 	})
 	if err != nil {
-		return "", fmt.Errorf("elagoht/consent: encode the script config: %w", err)
+		return "", fmt.Errorf("consent: encode the script config: %w", err)
 	}
 	return template.HTML(`<script defer src="` + scriptPath + `?v=` + scriptHash +
 		`" data-consent-config="` + html.EscapeString(string(data)) + `"></script>`), nil // built from escaped values

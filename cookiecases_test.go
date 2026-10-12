@@ -69,15 +69,15 @@ func cookieCases() []cookieCase {
 
 // browserConfig is the browser tests' configuration, and the server tests'
 // categories: essential (required), analytics and media.
-func browserConfig() Config {
-	return Config{
+func browserConfig() Options {
+	return Options{
 		Categories: []Category{{Name: "essential", Required: true}, {Name: "analytics"}, {Name: "media"}},
-		Text: map[string]Text{"en": {
+		Text: Text{
 			Title: "Cookies", Body: "We use cookies.", Accept: "Accept all", Reject: "Reject all",
 			Save: "Save choices", Settings: "Choose",
 			Placeholder: "This content loads from {host}.", Allow: "Allow {category}",
 			Categories: map[string]string{"essential": "Essential", "analytics": "Analytics", "media": "Embedded media"},
-		}},
+		},
 		PolicyURL: "/privacy",
 	}
 }

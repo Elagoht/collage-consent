@@ -8,11 +8,11 @@ choices apart.
 
 ```go
 app, err := collage.New(&collage.Config{
-	Plugins: []collage.Plugin{consent.New()}, // configured from plugins-config.json
+	Plugins: []collage.Plugin{consent.New(consent.Options{})}, // configured from plugins-config.json
 })
 ```
 
-Requires collage v0.60.0 or later. The layout places the script with
+Requires collage v0.61.0 or later. The layout places the script with
 `{{hoist "head"}}`. Without that marker nothing appears and nothing gated ever runs.
 
 Consent is decided in the browser. Every visitor gets the same HTML, gated markup
@@ -23,7 +23,7 @@ list (see [Reading the choice on the server](#reading-the-choice-on-the-server))
 ## Configuration
 
 You can configure the plugin in `plugins-config.json` under `"elagoht/consent"`, or
-pass a starting point with `consent.NewWith(consent.Config{…})`. The application's
+pass a starting point with `consent.New(consent.Options{…})`. The application's
 own configuration is decoded over that starting point.
 
 ```json
@@ -35,13 +35,13 @@ own configuration is decoded over that starting point.
       { "name": "media" }
     ],
     "text": {
-      "en": {
-        "title": "Cookies", "body": "We use cookies to measure visits and to show embedded media.",
-        "accept": "Accept all", "reject": "Reject all", "save": "Save choices", "settings": "Choose",
-        "placeholder": "This content loads from {host}.", "allow": "Allow {category}",
-        "policy": "Privacy policy",
-        "categories": { "necessary": "Necessary", "analytics": "Analytics", "media": "Embedded media" }
-      },
+      "title": "Cookies", "body": "We use cookies to measure visits and to show embedded media.",
+      "accept": "Accept all", "reject": "Reject all", "save": "Save choices", "settings": "Choose",
+      "placeholder": "This content loads from {host}.", "allow": "Allow {category}",
+      "policy": "Privacy policy",
+      "categories": { "necessary": "Necessary", "analytics": "Analytics", "media": "Embedded media" }
+    },
+    "locales": {
       "tr": { "title": "Çerezler", "accept": "Tümünü kabul et", "reject": "Tümünü reddet",
               "policy": "Gizlilik politikası" }
     },
@@ -55,25 +55,26 @@ own configuration is decoded over that starting point.
 | --- | --- |
 | `version` | Bump it to ask every visitor again. A stored choice from an older version counts as no decision. Default 1. |
 | `categories` | The kinds of processing. At least one is required. Each `name` matches `^[a-z0-9-]+$`. A `required` category is always granted, has no switch, and is never written to the cookie. |
-| `text` | The banner's wording per locale. The default locale must be present, with a label for every category. Every key in another locale, `categories` labels included, falls back to the default locale's. |
-| `text.*.placeholder`, `text.*.allow` | A held-back iframe's placeholder. `{host}` is the iframe's host, and `{category}` is the category's label. |
-| `text.*.policy` | The text of the link to `policyURL`. Without it, the link reads as the URL. |
+| `text` | The banner's wording in the application's default locale, with a label for every category. |
+| `locales` | The wording of each other locale, by locale. Every key, `categories` labels included, falls back to `text`'s. The default locale is not listed here. |
+| `placeholder`, `allow` | A held-back iframe's placeholder. `{host}` is the iframe's host, and `{category}` is the category's label. |
+| `policy` | The text of the link to `policyURL`. Without it, the link reads as the URL. |
 | `policyURL` | Links the banner to the privacy policy. Without it, there is no link. |
 | `maxAgeDays` | How long the choice is remembered, 1 to 400. Default 180. |
 | `serverPaths` | Paths where the server may read the choice. Each entry begins with `/`. Default none. |
 
-`Init` refuses a bad configuration with an error starting `elagoht/consent: `. Each
+`Init` refuses a bad configuration with an error starting `consent: `. Each
 of these is refused:
 
 - a bad or duplicate category name;
 - no categories;
 - `version` below 1;
-- no text for the default locale, or a missing label in it;
+- a category without a label in `text`, or a `locales` entry for the default locale;
 - `maxAgeDays` out of range;
 - a `serverPaths` entry without a leading `/`.
 
-A `Plugin` value serves one App. Create another with `New` for a second App, and see
-[Limits](#limits) for what two Apps in one process share.
+A `Plugin` value serves one App. Create another with `New` for a second App; two
+Apps in one process each read their own configuration.
 
 ## The script
 
@@ -243,6 +244,8 @@ with `collage.Varied`, never from the header itself.
 `Granted` answers as follows:
 
 - **A required category:** always true.
+- **No render context, or one built by hand outside a request:** false, even for a
+  required category; there is no App to read.
 - **An unknown category:** false.
 - **Outside `serverPaths`:** false, and logs one warning per category. The warning
   usually means the path is missing from the list.
@@ -328,11 +331,6 @@ shared, is a possible follow-up.
 
 ## Limits
 
-- **One consent plugin per process.** `Granted` is a plain function, so it reads the
-  configuration of the last App the plugin was initialised for. Two Apps in one
-  process with different consent configurations share the last one's categories
-  and version. The per-visitor choice is unaffected, because it travels with each
-  request.
 - **A shadowing cookie.** Another `collage_consent` cookie with a longer `Path`, or
   one set for a parent `Domain`, is sent first, and the browser and the server both
   read the first valid one. Such a cookie can defeat a withdrawal: the visitor saves
@@ -361,3 +359,18 @@ shared, is a possible follow-up.
 - Server-side logs of consent records.
 - Per-vendor choices; consent here is per category.
 - Reading GPC on the server (`Sec-GPC`).
+
+## Changed in v0.2.0
+
+| Was | Now |
+| --- | --- |
+| `consent.New()` | `consent.New(consent.Options{})` |
+| `consent.NewWith(cfg)` | `consent.New(opts)` |
+| `consent.Config` | `consent.Options` |
+| `text: {"en": {…}, "tr": {…}}` | `text: {…}` (the default locale's) and `locales: {"tr": {…}}`; the old shape stops the application, naming the locale key |
+| errors start with `elagoht/consent:` | errors start with `consent:` |
+
+`Granted` now reads the configuration of the App it renders for, not the last one
+initialised, so two Apps in one process (parallel tests, say) no longer read each
+other's categories. A call without a render context, `Granted(nil, …)`, is false
+even for a required category. Requires collage v0.61.0.

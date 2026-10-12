@@ -1,6 +1,7 @@
 package consent
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -8,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/Elagoht/collage/pkg/collage"
 )
@@ -30,20 +30,40 @@ const varyHeader = "X-Collage-Consent"
 // holds static files, the plugin's own among them.
 var skipPrefixes = []string{"/_live", "/_collage"}
 
-// serverState is what Granted needs, set by the last successful Init.
+// serverState is what Granted needs: one App's configuration, set by its Init.
 type serverState struct {
-	cfg    Config
+	cfg    Options
 	logger *slog.Logger
 	// warned holds the category names Granted has already warned about.
 	warned sync.Map
 }
 
-// active is the configuration Granted reads. Granted is a plain function, given
-// only a render's context, so it cannot reach a Plugin value: there is one
-// consent plugin per process, and a second App's Init replaces the first's. The
+// Granted is a plain function, given only a render's context, so it cannot reach
+// a Plugin value. Each App's state reaches it with the render instead: through
+// stateKey, set before every render the plugin sees, and through the request's
+// context, set by the middleware for every request, actions' included. The
 // per-request state, the visitor's choice, does not live here; it is the Vary
 // value, which is in the cache key and so survives a shared render.
-var active atomic.Pointer[serverState]
+var stateKey = collage.NewKey[*serverState](Name + ":state")
+
+// stateContext is the request context key the middleware puts the state under.
+type stateContext struct{}
+
+// stateOf is the state of the App rc renders for, or nil outside any.
+func stateOf(rc *collage.RenderContext) *serverState {
+	if rc == nil {
+		return nil
+	}
+	if st, ok := stateKey.Get(rc); ok && st != nil {
+		return st
+	}
+	if rc.Request != nil {
+		if st, ok := rc.Request.Context().Value(stateContext{}).(*serverState); ok {
+			return st
+		}
+	}
+	return nil
+}
 
 // Granted reports whether the visitor rendered for has granted category, on the
 // server. A required category is always granted, and an unknown one never is.
@@ -55,10 +75,11 @@ var active atomic.Pointer[serverState]
 // middleware ran. A static build and a build's capture request are not visitors,
 // so there Granted is false without a word.
 //
-// Granted reads the configuration of the last App the plugin was initialised
-// for: one consent plugin per process.
+// Granted reads the configuration of the App rc renders for, so applications in
+// one process — parallel tests among them — never read each other's. Without a
+// render context, or outside an App with the plugin, it is false.
 func Granted(rc *collage.RenderContext, category string) bool {
-	st := active.Load()
+	st := stateOf(rc)
 	if st == nil {
 		return false
 	}
@@ -69,14 +90,14 @@ func Granted(rc *collage.RenderContext, category string) bool {
 	if required {
 		return true
 	}
-	if rc == nil || rc.Request == nil {
+	if rc.Request == nil {
 		return false
 	}
 	combo, ok := collage.Varied(rc.Request.Context(), varyHeader)
 	if !ok {
 		if visitor(rc) {
 			if _, seen := st.warned.LoadOrStore(category, true); !seen {
-				st.logger.Warn(`elagoht/consent: Granted("`+category+`") is false: the choice was not read for this request; its path is not under serverPaths, or the request was answered before the consent middleware ran`,
+				st.logger.Warn(`consent: Granted("`+category+`") is false: the choice was not read for this request; its path is not under serverPaths, or the request was answered before the consent middleware ran`,
 					"category", category, "path", rc.Request.URL.Path)
 			}
 		}
@@ -101,7 +122,8 @@ func visitor(rc *collage.RenderContext) bool {
 	return !errors.Is(err, collage.ErrVaryOutsideRequest)
 }
 
-// middleware reads the visitor's choice on every request under cfg.ServerPaths,
+// middleware puts st in every request's context, for Granted, and reads the
+// visitor's choice on every request under cfg.ServerPaths,
 // but not under skipPrefixes: the granted non-required categories, sorted and
 // comma-joined, "" for none. It puts that in varyHeader and declares it with
 // collage.Vary, so the cache keys on the choice, not the raw cookie, and visitors
@@ -111,16 +133,18 @@ func visitor(rc *collage.RenderContext) bool {
 // choice in. A build's capture request is varied
 // like any other: it has no cookie, so its combo is "", and collage keeps Vary
 // out of the headers it deploys.
-func middleware(cfg Config, logger *slog.Logger) func(http.Handler) http.Handler {
+func middleware(st *serverState) func(http.Handler) http.Handler {
+	cfg, logger := st.cfg, st.logger
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r = r.WithContext(context.WithValue(r.Context(), stateContext{}, st))
 			if underPaths(r.URL.Path, cfg.ServerPaths) && !underPaths(r.URL.Path, skipPrefixes) {
 				granted, _ := readCookie(r, cfg)
 				combo := strings.Join(granted, ",")
 				r.Header.Set(varyHeader, combo)
 				w.Header().Add("Vary", "Cookie")
 				if err := collage.Vary(r, varyHeader, combo); err != nil {
-					logger.Warn("elagoht/consent: cannot vary on the consent cookie", "path", r.URL.Path, "error", err)
+					logger.Warn("consent: cannot vary on the consent cookie", "path", r.URL.Path, "error", err)
 				}
 			}
 			next.ServeHTTP(w, r)
@@ -132,7 +156,7 @@ func middleware(cfg Config, logger *slog.Logger) func(http.Handler) http.Handler
 // whether there is a decision. r.Cookie finds the cookie by the rules consent.js
 // follows (1-3: the first collage_consent whose value passes, one pair of quotes
 // unwrapped), and parseCookie reads it (4-9).
-func readCookie(r *http.Request, cfg Config) ([]string, bool) {
+func readCookie(r *http.Request, cfg Options) ([]string, bool) {
 	c, err := r.Cookie(cookieName)
 	if err != nil {
 		return nil, false

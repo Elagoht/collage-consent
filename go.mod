@@ -4,6 +4,6 @@ module github.com/Elagoht/collage-consent
 
 go 1.26
 
-require github.com/Elagoht/collage v0.60.0
+require github.com/Elagoht/collage v0.61.0
 
 retract v0.1.1 // its test suite pinned the previous version string; use v0.1.2

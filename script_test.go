@@ -32,24 +32,24 @@ var tagPattern = regexp.MustCompile(`<script defer src="/_collage/consent/consen
 
 // siteConfig is valid() with a tr block that lacks Accept, so the tr page must
 // fall back to en's.
-func siteConfig() Config {
+func siteConfig() Options {
 	c := valid()
-	en := c.Text["en"]
+	en := c.Text
 	en.Body = "We use cookies."
-	c.Text["en"] = en
-	c.Text["tr"] = Text{Title: "Çerezler", Reject: "Reddet", Categories: map[string]string{"essential": "Zorunlu"}}
+	c.Text = en
+	c.Locales = map[string]Text{"tr": Text{Title: "Çerezler", Reject: "Reddet", Categories: map[string]string{"essential": "Zorunlu"}}}
 	c.PolicyURL = "/privacy"
 	return c
 }
 
 // site is a real app with en and tr pages, each a layout around a fragment that
 // holds another fragment.
-func site(t *testing.T, cfg Config) *collage.App {
+func site(t *testing.T, cfg Options) *collage.App {
 	t.Helper()
 	return siteWith(t, cfg, func(*collage.Config) {})
 }
 
-func siteWith(t *testing.T, cfg Config, tweak func(*collage.Config)) *collage.App {
+func siteWith(t *testing.T, cfg Options, tweak func(*collage.Config)) *collage.App {
 	t.Helper()
 	conf := &collage.Config{
 		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
@@ -59,7 +59,7 @@ func siteWith(t *testing.T, cfg Config, tweak func(*collage.Config)) *collage.Ap
 			"t/inner.html":  {Data: []byte(innerHTML)},
 		}, Root: "t"},
 		Locale:  collage.LocaleConfig{Default: "en", Supported: []string{"en", "tr"}},
-		Plugins: []collage.Plugin{NewWith(cfg)},
+		Plugins: []collage.Plugin{New(cfg)},
 	}
 	tweak(conf)
 	a, err := collage.New(conf)
@@ -144,9 +144,9 @@ func TestHoist_LocaleText(t *testing.T) {
 func TestHoist_EscapesText(t *testing.T) {
 	const hostile = `<img src=x onerror=alert(1)>"'`
 	c := siteConfig()
-	en := c.Text["en"]
+	en := c.Text
 	en.Body = hostile
-	c.Text["en"] = en
+	c.Text = en
 	body := fetch(site(t, c), "/").Body.String()
 	for _, raw := range []string{"<img", "onerror=alert(1)>", `>"'`} {
 		if strings.Contains(body, raw) {
@@ -241,12 +241,12 @@ func TestExport_WritesScript(t *testing.T) {
 }
 
 func TestInit_Twice(t *testing.T) {
-	p := NewWith(valid())
+	p := New(valid())
 	if err := build(t, p); err != nil {
 		t.Fatal(err)
 	}
 	err := build(t, p)
-	const want = "elagoht/consent: a Plugin value serves one App; create another with New"
+	const want = "consent: a Plugin value serves one App; create another with New"
 	// collage wraps a plugin's Init error with the plugin's name.
 	if err == nil || !strings.HasSuffix(err.Error(), ": "+want) {
 		t.Errorf("second Init err = %v, want %q", err, want)
