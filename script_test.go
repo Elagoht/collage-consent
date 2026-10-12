@@ -19,6 +19,7 @@ import (
 	"testing/fstest"
 
 	"github.com/Elagoht/collage/pkg/collage"
+	"github.com/Elagoht/collage/pkg/collagetest"
 )
 
 const (
@@ -44,37 +45,29 @@ func siteConfig() Options {
 
 // site is a real app with en and tr pages, each a layout around a fragment that
 // holds another fragment.
-func site(t *testing.T, cfg Options) *collage.App {
+func site(t *testing.T, cfg Options, options ...collagetest.SiteOption) *collage.App {
 	t.Helper()
-	return siteWith(t, cfg, func(*collage.Config) {})
+	return siteWith(t, cfg, func(*collage.Config) {}, options...)
 }
 
-func siteWith(t *testing.T, cfg Options, tweak func(*collage.Config)) *collage.App {
+func siteWith(t *testing.T, cfg Options, tweak func(*collage.Config), options ...collagetest.SiteOption) *collage.App {
 	t.Helper()
-	conf := &collage.Config{
-		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
-		Template: collage.TemplateConfig{FS: fstest.MapFS{
-			"t/layout.html": {Data: []byte(layoutHTML)},
-			"t/outer.html":  {Data: []byte(outerHTML)},
-			"t/inner.html":  {Data: []byte(innerHTML)},
-		}, Root: "t"},
-		Locale:  collage.LocaleConfig{Default: "en", Supported: []string{"en", "tr"}},
-		Plugins: []collage.Plugin{New(cfg)},
-	}
-	tweak(conf)
-	a, err := collage.New(conf)
-	if err != nil {
-		t.Fatal(err)
-	}
 	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", collage.SlotRequired, collage.SlotSingle).Build()
 	inner := collage.NewFragment("inner", "inner.html").Build()
 	outer := collage.NewFragment("outer", "outer.html").WithSlot("inner", collage.SlotRequired, collage.SlotSingle).WithSlotFragment("inner", inner).Build()
 	page := collage.NewPage("home").WithLayouts(layout).WithContent(outer).
 		WithPath("en", "/").WithPath("tr", "/anasayfa").Static().Build()
-	if err := a.RegisterPage(page); err != nil {
-		t.Fatal(err)
-	}
-	return a
+	site := collagetest.NewSite(t, append([]collagetest.SiteOption{
+		collagetest.WithPlugins(New(cfg)),
+		collagetest.WithTemplates(map[string]string{"layout.html": layoutHTML, "outer.html": outerHTML, "inner.html": innerHTML}),
+		collagetest.WithConfig(func(c *collage.Config) {
+			c.Locale = collage.LocaleConfig{Default: "en", Supported: []string{"en", "tr"}}
+			tweak(c)
+		}),
+		collagetest.WithoutHome(),
+		collagetest.WithRegister(page),
+	}, options...)...)
+	return site.App
 }
 
 func fetch(a *collage.App, path string) *httptest.ResponseRecorder {
@@ -197,13 +190,10 @@ func TestScript_DevModeNoStore(t *testing.T) {
 
 // The script's mount must leave the rest of /_collage/ to others.
 func TestScript_SharesCollagePrefix(t *testing.T) {
-	a := site(t, siteConfig())
-	if err := a.Mount("/_collage/other/", fstest.MapFS{"x.txt": {Data: []byte("x")}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Start(); err != nil {
-		t.Fatalf("start with a second /_collage/ mount: %v", err)
-	}
+	// The site starts (NewSite fails the test otherwise) with a second /_collage/ mount.
+	a := site(t, siteConfig(), collagetest.WithSetup(func(app *collage.App) error {
+		return app.Mount("/_collage/other/", fstest.MapFS{"x.txt": {Data: []byte("x")}})
+	}))
 	if w := fetch(a, "/"); w.Code != http.StatusOK {
 		t.Errorf("/ status %d: %s", w.Code, w.Body)
 	}

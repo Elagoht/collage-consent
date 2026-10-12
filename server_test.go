@@ -12,10 +12,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/Elagoht/collage/pkg/collage"
+	"github.com/Elagoht/collage/pkg/collagetest"
 )
 
 func TestParseCookie_Table(t *testing.T) {
@@ -215,25 +215,6 @@ func newServerSite(t *testing.T, o siteOpts) *serverSite {
 	if cfg.ServerPaths == nil {
 		cfg.ServerPaths = []string{"/shop"}
 	}
-	a, err := collage.New(&collage.Config{
-		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
-		Template: collage.TemplateConfig{FS: fstest.MapFS{
-			"t/layout.html":  {Data: []byte(layoutHTML)},
-			"t/granted.html": {Data: []byte(grantedHTML)},
-		}, Root: "t"},
-		Locale:  collage.LocaleConfig{Default: "en", Supported: []string{"en"}},
-		Cache:   collage.CacheConfig{Enabled: true},
-		Logger:  slog.New(s.logs),
-		Plugins: append(o.before, New(cfg), s.probe),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if o.appUse != nil {
-		if err := a.Use(o.appUse); err != nil {
-			t.Fatal(err)
-		}
-	}
 	frag := func(name string, fn func(context.Context, *collage.RenderContext) (grantedView, error)) *collage.Fragment {
 		return collage.NewFragment(name, "granted.html").WithData(collage.Load(fn)).Build()
 	}
@@ -255,18 +236,29 @@ func newServerSite(t *testing.T, o siteOpts) *serverSite {
 	} else {
 		shopPage = shopPage.Incremental(time.Hour)
 	}
-	for _, p := range []*collage.Page{shopPage.Build(), openPage.Build()} {
-		if err := a.RegisterPage(p); err != nil {
-			t.Fatal(err)
-		}
+	options := []collagetest.SiteOption{
+		collagetest.WithPlugins(append(o.before, New(cfg), s.probe)...),
+		collagetest.WithTemplates(map[string]string{"layout.html": layoutHTML, "granted.html": grantedHTML}),
+		collagetest.WithConfig(func(c *collage.Config) {
+			c.Locale = collage.LocaleConfig{Default: "en", Supported: []string{"en"}}
+			c.Cache = collage.CacheConfig{Enabled: true}
+			c.Logger = slog.New(s.logs)
+		}),
+		collagetest.WithoutHome(),
+		collagetest.WithRegister(shopPage.Build(), openPage.Build()),
+		collagetest.WithSetup(func(a *collage.App) error {
+			if o.appUse != nil {
+				if err := a.Use(o.appUse); err != nil {
+					return err
+				}
+			}
+			if o.static {
+				return nil
+			}
+			return a.RegisterErrorPage(collage.NewPage("error").WithLayouts(layout).WithContent(frag("errc", plain)).Build())
+		}),
 	}
-	if !o.static {
-		errPage := collage.NewPage("error").WithLayouts(layout).WithContent(frag("errc", plain)).Build()
-		if err := a.RegisterErrorPage(errPage); err != nil {
-			t.Fatal(err)
-		}
-	}
-	s.app = a
+	s.app = collagetest.NewSite(t, options...).App
 	return s
 }
 
