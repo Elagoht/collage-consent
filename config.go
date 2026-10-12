@@ -50,8 +50,8 @@ type Options struct {
 	// Text is the wording in the application's default locale. It must label
 	// every category.
 	Text Text `json:"text"`
-	// Locales holds the wording of each other locale, by locale; a key left
-	// empty falls back to Text's.
+	// Locales holds the wording of other locales, by locale; a key left empty
+	// falls back to Text's. An entry for the default locale is merged over Text.
 	Locales map[string]Text `json:"locales"`
 	// PolicyURL links the banner to the privacy policy.
 	PolicyURL string `json:"policyURL"`
@@ -92,11 +92,9 @@ func (c Options) validate(defaultLocale string) error {
 	if c.Version < 1 {
 		return fmt.Errorf("consent: version %d must be at least 1", c.Version)
 	}
-	if _, ok := c.Locales[defaultLocale]; ok {
-		return fmt.Errorf("consent: locales has the default locale %q; its wording is text", defaultLocale)
-	}
+	labels := c.textFor(defaultLocale, defaultLocale).Categories
 	for _, cat := range c.Categories {
-		if c.Text.Categories[cat.Name] == "" {
+		if labels[cat.Name] == "" {
 			return fmt.Errorf("consent: text has no label for category %q", cat.Name)
 		}
 	}
@@ -131,16 +129,13 @@ func checkPolicyURL(v string) error {
 	return fmt.Errorf("consent: policyURL %q must be a path beginning with / or an absolute http(s) URL", v)
 }
 
-// textFor is the wording for locale, each key falling back to the default
-// locale's. The result shares nothing with the configuration.
+// textFor is the wording for locale: Text with Locales[locale] merged over it,
+// each key it leaves empty falling back to Text's. The result shares nothing with the configuration.
 func (c Options) textFor(locale, defaultLocale string) Text {
 	out := c.Text
 	out.Categories = make(map[string]string, len(out.Categories))
 	for k, v := range c.Text.Categories {
 		out.Categories[k] = v
-	}
-	if locale == defaultLocale {
-		return out
 	}
 	t, ok := c.Locales[locale]
 	if !ok {

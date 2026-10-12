@@ -56,7 +56,7 @@ own configuration is decoded over that starting point.
 | `version` | Bump it to ask every visitor again. A stored choice from an older version counts as no decision. Default 1. |
 | `categories` | The kinds of processing. At least one is required. Each `name` matches `^[a-z0-9-]+$`. A `required` category is always granted, has no switch, and is never written to the cookie. |
 | `text` | The banner's wording in the application's default locale, with a label for every category. |
-| `locales` | The wording of each other locale, by locale. Every key, `categories` labels included, falls back to `text`'s. The default locale is not listed here. |
+| `locales` | The wording of other locales, by locale. Every key, `categories` labels included, falls back to `text`'s. An entry for the default locale is merged over `text`. |
 | `placeholder`, `allow` | A held-back iframe's placeholder. `{host}` is the iframe's host, and `{category}` is the category's label. |
 | `policy` | The text of the link to `policyURL`. Without it, the link reads as the URL. |
 | `policyURL` | Links the banner to the privacy policy. Without it, there is no link. |
@@ -69,7 +69,7 @@ of these is refused:
 - a bad or duplicate category name;
 - no categories;
 - `version` below 1;
-- a category without a label in `text`, or a `locales` entry for the default locale;
+- a category without a label in `text` (or in a `locales` entry for the default locale merged over it);
 - `maxAgeDays` out of range;
 - a `serverPaths` entry without a leading `/`.
 
@@ -367,7 +367,7 @@ shared, is a possible follow-up.
 | `consent.New()` | `consent.New(consent.Options{})` |
 | `consent.NewWith(cfg)` | `consent.New(opts)` |
 | `consent.Config` | `consent.Options` |
-| `text: {"en": {…}, "tr": {…}}` | `text: {…}` (the default locale's) and `locales: {"tr": {…}}`; the old shape stops the application, naming the locale key |
+| `text: {"en": {…}, "tr": {…}}` | `text: {…}` (the default locale's) and `locales: {"tr": {…}}`, where an entry for the default locale is merged over `text`; the old shape stops the application, naming the locale key |
 | errors start with `elagoht/consent:` | errors start with `consent:` |
 
 `Granted` now reads the configuration of the App it renders for, not the last one

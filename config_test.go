@@ -28,7 +28,7 @@ func TestValidate_Table(t *testing.T) {
 		{"duplicate", func(c *Options) { c.Categories[1].Name = "essential" }, "duplicate"},
 		{"no categories", func(c *Options) { c.Categories = nil }, "no categories"},
 		{"version", func(c *Options) { c.Version = -1 }, "version"},
-		{"default in locales", func(c *Options) { c.Locales = map[string]Text{"en": {}} }, "locales has the default locale"},
+		{"default in locales", func(c *Options) { c.Locales = map[string]Text{"en": {Title: "Over"}} }, ""},
 		{"missing label", func(c *Options) {
 			c.Text = Text{Categories: map[string]string{"essential": "E"}}
 		}, "label"},
@@ -152,5 +152,21 @@ func TestInit_Version(t *testing.T) {
 	c.Version = -1
 	if err := build(t, New(c)); err == nil || !strings.Contains(err.Error(), "consent: version -1") {
 		t.Errorf("version -1 err = %v", err)
+	}
+}
+
+// A locales entry for the default locale is merged over text, as toc and search
+// merge theirs: its keys win, and the ones it leaves empty are text's.
+func TestTextFor_DefaultLocaleInLocales(t *testing.T) {
+	c := valid()
+	c.Text.Title = "Cookies"
+	c.Text.Accept = "Accept"
+	c.Locales = map[string]Text{"en": {Title: "Our cookies", Categories: map[string]string{"analytics": "Stats"}}}
+	if err := c.withDefaults().validate("en"); err != nil {
+		t.Fatal(err)
+	}
+	got := c.textFor("en", "en")
+	if got.Title != "Our cookies" || got.Accept != "Accept" || got.Categories["analytics"] != "Stats" || got.Categories["essential"] == "" {
+		t.Errorf("textFor(en) = %+v", got)
 	}
 }

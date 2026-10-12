@@ -40,7 +40,7 @@
       },
       "locales": {
         "type": "object",
-        "description": "Locales holds the wording of each other locale, by locale; a key left empty falls back to Text's.",
+        "description": "Locales holds the wording of other locales, by locale; a key left empty falls back to Text's. An entry for the default locale is merged over Text.",
         "additionalProperties": {
           "type": "object",
           "properties": {

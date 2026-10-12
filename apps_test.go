@@ -2,7 +2,9 @@ package consent
 
 import (
 	"context"
+	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Elagoht/collage/pkg/collage"
@@ -74,5 +76,27 @@ func TestTextAndLocalesFromConfig(t *testing.T) {
 	en, tr := p.cfg.textFor("en", "en"), p.cfg.textFor("tr", "en")
 	if en.Title != "Cookies" || tr.Title != "Çerezler" || tr.Accept != "Accept" || tr.Categories["essential"] != "Essential" {
 		t.Errorf("en = %+v, tr = %+v", en, tr)
+	}
+}
+
+// An action is not rendered, so no render key reaches it: Granted reads the
+// App's configuration from the request's context, which the middleware set.
+func TestGranted_InAction(t *testing.T) {
+	cfg := serverConfig()
+	cfg.ServerPaths = []string{"/shop"}
+	var essential, analytics, media atomic.Bool
+	action := collage.NewAction("buy").WithPath("en", "/shop/buy").WithMethods(http.MethodPost).WithoutCSRF().
+		WithHandler(func(_ context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
+			essential.Store(Granted(rc, "essential"))
+			analytics.Store(Granted(rc, "analytics"))
+			media.Store(Granted(rc, "media"))
+			return collage.SeeOther("/"), nil
+		}).Build()
+	site := collagetest.NewSite(t, collagetest.WithPlugins(New(cfg)), collagetest.WithRegister(action))
+	req := site.Request(http.MethodPost, "/shop/buy", nil)
+	req.Header.Set("Cookie", "collage_consent=v=1&c=analytics&t=1")
+	site.Do(req).WantStatus(http.StatusSeeOther)
+	if !essential.Load() || !analytics.Load() || media.Load() {
+		t.Errorf("in an action: essential=%v analytics=%v media=%v, want true true false", essential.Load(), analytics.Load(), media.Load())
 	}
 }
