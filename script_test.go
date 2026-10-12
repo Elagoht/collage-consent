@@ -66,9 +66,9 @@ func siteWith(t *testing.T, cfg Config, tweak func(*collage.Config)) *collage.Ap
 	if err != nil {
 		t.Fatal(err)
 	}
-	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).Build()
+	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", collage.SlotRequired, collage.SlotSingle).Build()
 	inner := collage.NewFragment("inner", "inner.html").Build()
-	outer := collage.NewFragment("outer", "outer.html").WithSlot("inner", true, false).WithSlotFragment("inner", inner).Build()
+	outer := collage.NewFragment("outer", "outer.html").WithSlot("inner", collage.SlotRequired, collage.SlotSingle).WithSlotFragment("inner", inner).Build()
 	page := collage.NewPage("home").WithLayouts(layout).WithContent(outer).
 		WithPath("en", "/").WithPath("tr", "/anasayfa").Static().Build()
 	if err := a.RegisterPage(page); err != nil {
@@ -224,11 +224,7 @@ func TestScript_Hash(t *testing.T) {
 
 func TestExport_WritesScript(t *testing.T) {
 	out := t.TempDir()
-	b, err := collage.NewBuilder(site(t, siteConfig()), collage.BuildOptions{OutDir: out})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := b.Build(context.Background()); err != nil {
+	if _, err := collage.Build(context.Background(), site(t, siteConfig()), collage.BuildOptions{OutDir: out}); err != nil {
 		t.Fatal(err)
 	}
 	js, err := os.ReadFile(filepath.Join(out, "_collage", "consent", "consent.js"))

@@ -395,7 +395,7 @@ func serveBrowserSite(t *testing.T, cfg Config, extra, csp string) (string, <-ch
 	if err != nil {
 		t.Fatal(err)
 	}
-	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).Build()
+	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", collage.SlotRequired, collage.SlotSingle).Build()
 	content := collage.NewFragment("content", "content.html").Build()
 	if err := a.RegisterPage(collage.NewPage("home").WithLayouts(layout).WithContent(content).WithPath("en", "/").Build()); err != nil {
 		t.Fatal(err)
@@ -418,7 +418,7 @@ func serveBrowserSite(t *testing.T, cfg Config, extra, csp string) (string, <-ch
 			case results <- b:
 			default:
 			}
-			return collage.NoContent(http.StatusNoContent), nil
+			return collage.Status(http.StatusNoContent), nil
 		}).Build()
 	if err := a.RegisterAction(result); err != nil {
 		t.Fatal(err)

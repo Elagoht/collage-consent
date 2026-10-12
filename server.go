@@ -72,7 +72,7 @@ func Granted(rc *collage.RenderContext, category string) bool {
 	if rc == nil || rc.Request == nil {
 		return false
 	}
-	combo, ok := collage.Varied(rc, varyHeader)
+	combo, ok := collage.Varied(rc.Request.Context(), varyHeader)
 	if !ok {
 		if visitor(rc) {
 			if _, seen := st.warned.LoadOrStore(category, true); !seen {

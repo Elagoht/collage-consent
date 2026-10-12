@@ -12,7 +12,7 @@ app, err := collage.New(&collage.Config{
 })
 ```
 
-Requires collage v0.57.0 or later. The layout places the script with
+Requires collage v0.60.0 or later. The layout places the script with
 `{{hoist "head"}}`. Without that marker nothing appears and nothing gated ever runs.
 
 Consent is decided in the browser. Every visitor gets the same HTML, gated markup

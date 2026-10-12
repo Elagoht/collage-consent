@@ -241,7 +241,7 @@ func newServerSite(t *testing.T, o siteOpts) *serverSite {
 		return collage.NewFragment(name, "granted.html").WithData(collage.Load(fn)).Build()
 	}
 	plain := func(_ context.Context, rc *collage.RenderContext) (grantedView, error) { return view(rc), nil }
-	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).Build()
+	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", collage.SlotRequired, collage.SlotSingle).Build()
 	shop := frag("shop", func(_ context.Context, rc *collage.RenderContext) (grantedView, error) {
 		s.renders.Add(1)
 		return view(rc), nil
@@ -382,11 +382,7 @@ func TestGranted_Required(t *testing.T) {
 func TestGranted_StaticExport(t *testing.T) {
 	s := newServerSite(t, siteOpts{static: true})
 	out := t.TempDir()
-	b, err := collage.NewBuilder(s.app, collage.BuildOptions{OutDir: out})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := b.Build(context.Background()); err != nil {
+	if _, err := collage.Build(context.Background(), s.app, collage.BuildOptions{OutDir: out}); err != nil {
 		t.Fatal(err)
 	}
 	for _, f := range []string{"shop/index.html", "open/index.html"} {
@@ -543,7 +539,7 @@ func (p *blockPlugin) Init(_ context.Context, h collage.Host) error {
 			}
 			p.host.ServeStatus(w, r, http.StatusForbidden)
 			for _, h := range []string{varyHeader, "Cookie", ""} {
-				if v, ok := collage.VariedContext(r.Context(), h); ok {
+				if v, ok := collage.Varied(r.Context(), h); ok {
 					p.declared = append(p.declared, h+"="+v)
 				}
 			}
