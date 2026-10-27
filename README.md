@@ -274,16 +274,16 @@ Keep `serverPaths` to the few pages whose HTML must differ by consent, and gate
 everything else in the browser. Each entry is a trade of CDN caching for a
 server-side answer.
 
-### Never cover stream paths
+### Stream paths
 
-A pushed fragment is rendered once and sent to every subscriber. On a live or
-WebSocket stream, a consent-dependent render would therefore reach every visitor
-with the first one's choice. The middleware never varies `/_live/` (collage-live's
-default prefix) or `/_collage/`, even when `serverPaths` is `/`, so `Granted` is
-false in what they render. Do not list a stream path of your own either, such as
-collage-live under another `prefix` or a WebSocket endpoint. A fix in collage
-itself, where `RenderFragment` stops reporting a varied request's render as
-shared, is a possible follow-up.
+The middleware never varies a stream's own path, `/_live/` (collage-live's default
+prefix) or `/_collage/`, even when `serverPaths` is `/`: the stream request is not
+a page. What a stream pushes is another matter. Since collage v0.78.0 a pushed
+fragment is a request to the fragment's own URL, which passes this middleware for
+that path, so under `serverPaths` it reads each reader's own choice, and a render
+that varied on it is made for that reader rather than shared between readers.
+Before v0.78.0 a pushed fragment did not pass the middleware, and `Granted` was
+false in it.
 
 ## Global Privacy Control and Do Not Track
 
