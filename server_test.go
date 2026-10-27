@@ -483,6 +483,9 @@ func (p *streamPlugin) Init(_ context.Context, h collage.Host) error {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		if fr.Shared {
+			w.Header().Set("X-Test-Shared", "1")
+		}
 		_, _ = w.Write([]byte(fr.HTML))
 	}))
 }
@@ -493,8 +496,11 @@ func TestServer_SkipsStreamPaths(t *testing.T) {
 	s := newServerSite(t, siteOpts{serverPaths: []string{"/"}, before: []collage.Plugin{&streamPlugin{}}})
 	const granted = "collage_consent=v=1&c=analytics,media&t=1"
 	w := s.get(t, "/_live/stream", granted)
-	if b := para(w.Body.String()); !strings.Contains(b, "analytics=false media=false") {
-		t.Errorf("a stream render read the choice: %s", b)
+	// Since collage v0.78.0 a pushed fragment passes the middleware for its own
+	// path, so under serverPaths it may read the reader's choice — and is then
+	// not Shared. What must never happen is a shared render that read one.
+	if b := para(w.Body.String()); !strings.Contains(b, "analytics=false media=false") && w.Header().Get("X-Test-Shared") != "" {
+		t.Errorf("a shared stream render read the choice: %s", b)
 	}
 	if varies(w, "Cookie") {
 		t.Errorf("stream Vary = %q", w.Header().Values("Vary"))
